@@ -1,0 +1,9 @@
+@font-face {
+    font-family: productRegular;
+    src: url("font/Poppins-Regular.ttfs");
+  }
+  
+  @font-face {
+    font-family: productBold;
+    src: url("font/Poppins-Bold.ttf");
+  }

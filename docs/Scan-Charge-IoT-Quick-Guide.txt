@@ -1,0 +1,109 @@
+Scan Charge — IoT Team Quick Guide (Office Dummy Charger)
+
+Use this sheet with QA. Each row is one test IoT needs to help with.
+
+---
+
+TEST 1 — Charger OFF (user cannot start)
+What it simulates: Charger is dead or offline
+What IoT does:
+  1. STOP sending all charger data
+  2. Wait at least 5 minutes
+What QA does:
+  3. User opens app, scans QR, taps Start
+What should happen:
+  - App shows offline message (not "charging started")
+  - No active charging session
+
+---
+
+TEST 2 — Normal charging (everything works)
+What it simulates: Real car charging normally
+What IoT does:
+  1. SEND data every 30–60 seconds
+  2. IMPORTANT: energy value must KEEP GOING UP
+     Example: 100.0 → 100.5 → 101.0 → 101.5 → 102.0
+  3. Also send power (e.g. 7000) so speed shows on app
+What QA does:
+  4. User starts charge
+  5. Watches live screen for 2–3 minutes
+  6. User taps Stop
+What should happen:
+  - Start succeeds
+  - kWh, time, cost, speed update on screen
+  - Stop works
+  - Session appears in history
+
+---
+
+TEST 3 — Started but not charging (auto fail)
+What it simulates: Plugged in but car not taking power
+What IoT does:
+  1. SEND data regularly
+  2. Keep energy EXACTLY THE SAME (do not increase)
+What QA does:
+  3. User starts charge
+  4. Wait 3–4 minutes (do not stop)
+What should happen:
+  - Start succeeds at first
+  - After ~3 minutes session fails automatically
+  - App shows help message why it failed
+  - Charger relay turns OFF
+
+---
+
+TEST 4 — Charge ON then IoT stops sending
+What it simulates: Connection lost after charging started
+What IoT does:
+  1. SEND data until user successfully starts charge
+  2. Then STOP sending completely
+What QA does — Option A:
+  3. Wait 3–4 minutes without stopping
+What should happen (Option A):
+  - Live screen numbers freeze
+  - Session usually fails if energy never increased
+
+What QA does — Option B:
+  3. Tap Stop within 3 minutes
+What should happen (Option B):
+  - Stop still works
+  - Very low or zero usage recorded
+
+---
+
+TEST 5 — Two users same charger
+What it simulates: Charger already in use
+What IoT does:
+  1. SEND rising energy data
+What QA does:
+  2. User A starts charging
+  3. User B scans same charger and tries Start
+What should happen:
+  - User B sees "charger already in use" or similar
+
+---
+
+QUICK CHEAT SHEET FOR IOT
+
+| IoT action                         | Meaning              | App result                    |
+|------------------------------------|----------------------|-------------------------------|
+| No data for 5+ minutes             | Charger offline      | Cannot start                  |
+| Data sent, energy flat             | Not charging         | Start → fail after 3 min      |
+| Data sent, energy going up         | Normal charging      | Full flow works               |
+| Data until start, then stop        | Connection lost      | Frozen screen → likely fail   |
+
+---
+
+WHAT TO SEND (minimum)
+
+- Charger ID (your dummy ID)
+- Energy (total kWh — must increase for happy path)
+- Power (for speed on app)
+- Send regularly so system knows charger is "online"
+
+---
+
+WHEN QA SAYS "CHARGER ONLINE" → start sending data
+WHEN QA SAYS "CHARGER OFFLINE" → stop sending for 5+ minutes
+WHEN QA SAYS "NOT PLUGGED IN" → send data but keep energy same
+WHEN QA SAYS "HAPPY PATH" → send data with energy going up every minute

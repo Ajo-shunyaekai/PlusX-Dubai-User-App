@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>Invoice</title>
+        <link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700,900&display=swap" rel="stylesheet">
+        <style>
+            table,
+            th,
+            td {
+                border-collapse: collapse;
+                font-size: 12px;
+                vertical-align: top;
+                color: black;
+                font-weight: bold;
+            } 
+            b {
+                font-weight: 700
+            }
+            th {
+                padding: 3px 5px;
+                border: 1px solid black;
+            }
+            td {
+                padding: 3px 5px;
+                border: 1px solid black;
+            }
+            .bdr {
+                color: black!important;
+                font-weight: bold;
+                border-bottom: 0px
+            }
+            .bdl {
+                border-top: 0px
+            }
+            .colr1 {
+                color: #1f4c99;
+                font-weight: 700;
+            }
+            .font16 {
+                font-size: 16px;
+            }
+            .font14 {
+                font-size: 14px;
+            }
+            .texr-center {
+                text-align: center;
+            }
+            .texr-left {
+                text-align: left;
+            }
+            .texr-right {
+                text-align: right;
+            }
+        </style>
+    </head>
+    <body>
+        <page style="background: white;">
+            <p style="line-height: 30px;font-size: 24px;font-weight: 700;margin: 0;padding: 0;text-align: center" class="texr-center colr1">
+                <img width="130" src="https://plusx.shunyaekai.com/public/invoice-assets/xPlusLogo.png" />
+            </p>
+            <br />
+            <table style="margin-top: 15px;width:100%;float:left;" class="width-100 bdrall">
+                <tbody>
+                    <tr>
+                        <td class="colr1 font14"><b>Invoice No.</b></td>
+                        <td class="texr-center"><%= data.invoice_id %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Booking Id</td>
+                        <td class="texr-center"><%= data.request_id %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Invoice Date </td>
+                        <td class="texr-center"><%= data.invoice_date %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Status</td>
+                        <td class="texr-center"><%= data.payment_status === 'succeeded' ? 'Completed' : data.payment_status.charAt(0).toUpperCase() + data.payment_status.slice(1) %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Payment Type</td>
+                        <td class="texr-center"><%= data.payment_type.charAt(0).toUpperCase() + data.payment_type.slice(1) %></td>
+                    </tr>
+                </tbody>
+            </table>
+            <table style="margin-top: 155px;width: 100%;float:right;margin-left: 0px;" class="width-100 bdrall">
+                <tbody>
+                    <tr>
+                        <td class="colr1 font14">Name </td>
+                        <td class="texr-center"><%= data.name %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Email  </td>
+                        <td class="texr-center"><%= data.email %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14">Mobile No.  </td>
+                        <td class="texr-center"><%= data.country_code %> - <%= data.contact_no %></td>
+                    </tr>
+                    <tr> 
+                        <td class="colr1 font14 ">Company Name</td>
+                        <td class="texr-center"><%= data.company_name %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14 ">Service Type</td>
+                        <td class="texr-center"><%= data.service_type %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14 ">Vehicle Model</td>
+                        <td class="texr-center"><%= data.vehicle_model %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14 ">Resident Type</td>
+                        <td class="texr-center"><%= data.resident_type %></td>
+                    </tr>
+                    <tr>
+                        <td class="colr1 font14 ">No Of Charger</td>
+                        <td class="texr-center"><%= data.no_of_charger %></td>
+                    </tr>
+                </tbody>
+            </table>
+            <table style="margin-top: 362px;width: 100%;float: left;" class="width-100 bdrall">
+                <thead>
+                    <tr>
+                        <th class="colr1 font14" colspan="3">Pickup Address</th>
+                        <th class="colr1 font14">Base Price</th>
+                        <th class="colr1 font14">Total (<%= data.currency ? data.currency.toUpperCase() : '' %>)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="bdr bdl" colspan="3"><%= data.address %></td>
+                        <td class="bdr bdl"><%= data.currency ? data.currency.toUpperCase() : '' %> : <%= formatNumber(data.price) %></td>
+                        <td class="bdr bdl"><%= formatNumber(data.price) %></td>
+                    </tr>
+                    <tr>
+                        <td class="texr-center colr1 font14" colspan="4">Net Amount</td>
+                        <td><b><%= formatNumber(data.price) %></b></td>
+                    </tr>   
+                    <tr>
+                        <?php 
+                            $total_amt = $result['price']; // + $tax;
+                        ?>
+                        <td class="texr-center colr1 font14" colspan="4" style="font-size: 16px">Grand Total </td>
+                        <td style="font-size: 16px">
+                            <b><%= formatNumber(data.price) %></b><br>
+                            <span style="font-size: 12px;">(5% Vat included)</span>
+                        </td>
+                    </tr>                 
+                    <tr>
+                        <td class="texr-left" colspan="5">
+                            <soan class="font14">
+                                <b> Grand Total In Words </b>: <%= numberToWords(Math.floor(data.price)) %>
+                            </soan>
+                        </td>         
+                    </tr> 
+                </tbody>
+            </table>
+            <p style="font-size: 12px;margin-top: 0px;float: left;position: absolute;text-align:center;bottom: 10px;">This is an Official System Generated Invoice No Signature is Required</p>
+            <p style="font-size: 10px;margin-top: 0px;float: left;position: absolute;text-align: right;bottom: 10px;width: 720px;">Report Time: <%= new Date().toLocaleString() %></p>
+        </page>
+    </body>
+</html>

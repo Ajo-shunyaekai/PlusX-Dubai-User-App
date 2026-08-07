@@ -1,0 +1,6 @@
+{
+    "poppins": {
+        "normal": "C:\\xampp\\htdocs\\php-pdf\\vendor\\dompdf\\dompdf\/lib\/fonts\/poppins_normal_a62832bf75823019dc29c5a9c470d64d",
+        "bold": "poppins_bold_87c49bf24d72f01a4af573680817521f"
+    }
+}

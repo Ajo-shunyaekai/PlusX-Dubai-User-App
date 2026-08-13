@@ -147,10 +147,12 @@ export const responseContent = asyncHandler(async (req, resp) => {
 
     // module_name + response_type only — e.g. portable-charger service-unavailable popup
     if (response_type != null && sub_module == null) {
+        const isPortableServiceUnavailable = module_name === 'portable-charger' && response_type === 'service-unavailable';
+
         const [filteredRows] = await db.execute(`
-            SELECT content, additional_content
+            SELECT content, additional_content${isPortableServiceUnavailable ? ', status' : ''}
             FROM response_content
-            WHERE module_name = ? AND response_type = ? AND status = 1
+            WHERE module_name = ? AND response_type = ? ${isPortableServiceUnavailable ? '' : 'AND status = 1'}
             ORDER BY id ASC
         `, [ module_name, response_type ]);
 
@@ -158,10 +160,17 @@ export const responseContent = asyncHandler(async (req, resp) => {
             return resp.json({ resp: 0, code: 400, msg: 'content not found!' });
         }
 
-        const contactRow = filteredRows.find(row => row.additional_content);
-        const data       = await buildModuleData(filteredRows, contactRow?.additional_content || '', response_type);
+        const contentRows = isPortableServiceUnavailable
+            ? filteredRows.filter(row => row.status === 1)
+            : filteredRows;
+        const contactRow  = filteredRows.find(row => row.additional_content);
+        const data          = await buildModuleData(contentRows, contactRow?.additional_content || '', response_type);
 
         if (!data) return resp.json({ resp: 0, code: 400, msg: 'content not found!' });
+
+        if (isPortableServiceUnavailable) {
+            data.serviceUnvailable = filteredRows[0].status ? 1 : 0;
+        }
 
         return resp.json({ message: ["Response data fetch successfully"], status: 1, code: 200, data });
     }

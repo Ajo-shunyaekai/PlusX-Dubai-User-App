@@ -160,17 +160,29 @@ export const responseContent = asyncHandler(async (req, resp) => {
             return resp.json({ resp: 0, code: 400, msg: 'content not found!' });
         }
 
-        const contentRows = isPortableServiceUnavailable
-            ? filteredRows.filter(row => row.status === 1)
-            : filteredRows;
-        const contactRow  = filteredRows.find(row => row.additional_content);
-        const data          = await buildModuleData(contentRows, contactRow?.additional_content || '', response_type);
-
-        if (!data) return resp.json({ resp: 0, code: 400, msg: 'content not found!' });
+        const contactRow = filteredRows.find(row => row.additional_content);
 
         if (isPortableServiceUnavailable) {
-            data.serviceUnvailable = filteredRows[0].status ? 1 : 0;
+            const bodyText = (filteredRows[1]?.content || '')
+                .replace(/\+?\d[\d\s-]{6,}\d/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
+
+            return resp.json({
+                message: ["Response data fetch successfully"],
+                status: 1,
+                code: 200,
+                data: {
+                    heading               : filteredRows[0]?.content || '',
+                    podUnavailableContent : bodyText,
+                    teamContactNo         : contactRow?.additional_content || '',
+                    serviceUnvailable     : filteredRows[0].status ? 1 : 0,
+                },
+            });
         }
+
+        const data = await buildModuleData(filteredRows, contactRow?.additional_content || '', response_type);
+        if (!data) return resp.json({ resp: 0, code: 400, msg: 'content not found!' });
 
         return resp.json({ message: ["Response data fetch successfully"], status: 1, code: 200, data });
     }

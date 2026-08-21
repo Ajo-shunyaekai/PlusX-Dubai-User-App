@@ -540,12 +540,15 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     let slotDateTime = moment(`${checkOrder.slot_date} ${checkOrder.slot_time}`).format('YYYY-MM-DD HH:mm:ss');
     let dubaiTime    = moment.tz("Asia/Dubai").format('YYYY-MM-DD HH:mm:ss');
     
-    let cancellationDeadline = moment(slotDateTime).subtract(1, 'hours').format('YYYY-MM-DD HH:mm:ss');
+    // let cancellationDeadline = moment(slotDateTime).subtract(1, 'hours').format('YYYY-MM-DD HH:mm:ss');
+    let cancellationDeadline = moment(slotDateTime).subtract(2, 'hours').format('YYYY-MM-DD HH:mm:ss');
+
     if (dubaiTime > cancellationDeadline) {
         return resp.json({
             status  : 0,
             code    : 422,
-            message: ['Please note: Cancellations aren`t allowed within 1 hours of the scheduled time.']
+            // message: ['Please note: Cancellations aren`t allowed within 1 hours of the scheduled time.']
+            message: ['Please note: Cancellations aren`t allowed within 2 hours of the scheduled time.']
         });
     }
     const insert = await db.execute(

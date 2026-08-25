@@ -103,7 +103,11 @@ export const responseContent = asyncHandler(async (req, resp) => {
         };
         const column = !responseType ? columnMap[module_name] : null;
         let selectQuery = `
-            SELECT heading, image ${column ? `, (SELECT ${column} FROM booking_price) AS price` : ``}
+            SELECT heading, image
+                ${column ? `, (SELECT ${column} FROM booking_price LIMIT 1) AS price` : ``}
+                ${module_name === 'portable-charger' && column
+                    ? `, (SELECT portable_original_price FROM booking_price LIMIT 1) AS original_price`
+                    : ``}
             FROM response_module
             WHERE name = ? AND status = 1
             ${responseType ? 'AND sub_module = ?' : 'AND (sub_module IS NULL OR sub_module = \'\')'}
@@ -114,9 +118,14 @@ export const responseContent = asyncHandler(async (req, resp) => {
 
         if (!contentdata) return null;
 
-        let { heading, image, price } = contentdata;
+        let { heading, image, price, original_price } = contentdata;
         let priceErrMsg = '';
         price = price ?? 0;
+        original_price = original_price ?? null;
+        const discount_amount =
+            original_price != null && Number(original_price) > Number(price)
+                ? Number((Number(original_price) - Number(price)).toFixed(2))
+                : null;
 
         if (module_name == 'road-assistance') {
             const currDate = moment().utcOffset(4).format('dddd');
@@ -139,9 +148,11 @@ export const responseContent = asyncHandler(async (req, resp) => {
             image            : image || null,
             heading          : heading || null,
             price            : price || 0,
+            original_price   : original_price,
+            discount_amount  : discount_amount,
             slotErrMsg       : priceErrMsg,
             // zeroPercentModal : 'If your EV has 0% battery, the portable power service will not work. Kindly book our Roadside (Emergency) EV charging service.',
-            zeroPercentModal : 'If your EV has less than 10% battery, the Mobile Charging service will not work. Kindly book our Roadside Assistance (Emergency) EV Charging service.',
+            zeroPercentModal : 'If your EV has less than 10% battery, the mobile & portable EV charging service will not work. Kindly book our Roadside Assistance (Emergency) EV Charging service.',
             ...(contactNo ? { teamContactNo: contactNo } : {}),
         };
     };

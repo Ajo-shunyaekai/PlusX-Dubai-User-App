@@ -422,12 +422,19 @@ export const home = asyncHandler(async (req, resp) => {
     const currTime = moment().utcOffset(4).format('HH:mm:ss');
     const priceQry  = `
         SELECT 
-            portable_price, pick_drop_price, 
+            portable_price, portable_original_price, pick_drop_price, 
             ( SELECT slot_price FROM road_assistance_slot WHERE status = 1 AND slot_date = "${currDate}" AND "${currTime}" BETWEEN start_time AND end_time order by start_time asc limit 1 ) as slot_price 
         FROM booking_price 
         LIMIT 1`;
     const priceData = await queryDB(priceQry, []);
     const scanChargingData = await scanChargingDetail(rider_id) ;
+
+    const portablePrice = priceData.portable_price;
+    const portableOriginalPrice = priceData.portable_original_price ?? null;
+    const portableDiscountAmount =
+        portableOriginalPrice != null && Number(portableOriginalPrice) > Number(portablePrice)
+            ? Number((Number(portableOriginalPrice) - Number(portablePrice)).toFixed(2))
+            : null;
 
     return resp.json({
         message                   : ["Rider Home Data fetched successfully!"],
@@ -436,7 +443,9 @@ export const home = asyncHandler(async (req, resp) => {
         pick_drop_order           : pickDropData || null,
         pod_booking               : podBookingData || null,
         roadside_assistance_price : priceData.slot_price || 0,
-        portable_price            : priceData.portable_price,
+        portable_price            : portablePrice,
+        portable_original_price   : portableOriginalPrice, // striked display price
+        portable_discount_amount  : portableDiscountAmount, //discount amount
         pick_drop_price           : priceData.pick_drop_price,
         status                    : 1,
         code                      : 200,

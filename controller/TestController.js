@@ -180,11 +180,11 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
             createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
-            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 5%' : '0%' ;
+            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
             const htmlUser = `<html>
                 <body>
                     <h4>Dear ${checkOrder.user_name},</h4>
-                    <p>Thank you for choosing our portable charger service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
+                    <p>Thank you for choosing our mobile & portable EV charging service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
                     <p>Booking Details:</p>
                     <p>Booking ID: ${booking_id}</p>
                     <p>Date and Time of Service: ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
@@ -193,12 +193,12 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Portable EV Charger', htmlUser);
+            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Mobile & Portable EV Charging Service', htmlUser);
 
             const htmlAdmin = `<html>
                 <body>
                     <h4>Dear Admin,</h4>
-                    <p>We have received a new booking for our Portable Charger service. Please find the details below:</p> 
+                    <p>We have received a new booking for our mobile & portable EV charging service. Please find the details below:</p> 
                     <p>Customer Name : ${checkOrder.user_name}</p>
                     <p>Contact No.   : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
                     <p>Address       : ${checkOrder.address}</p>            

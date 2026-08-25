@@ -39,13 +39,13 @@ export const pickAndDropInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND cs.price = "0"
  
-        if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
-            return resp.json({ 
-                message : [`We have received your booking. Our team will get in touch with you soon!`], 
-                status  : 1, 
-                code    : 200 
-            });
-        }
+        // if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
+        //     return resp.json({ 
+        //         message : [`We have received your booking. Our team will get in touch with you soon!`], 
+        //         status  : 1, 
+        //         code    : 200 
+        //     });
+        // }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM charging_service_history WHERE service_id = ? AND order_status = "CNF"',[request_id]
         );
@@ -145,10 +145,10 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND pcb.service_price = "0"
 
-        if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
-            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
-            return resp.json({ message : [respMsg], status: 1, code : 200 });
-        }
+        // if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
+        //     let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+        //     return resp.json({ message : [respMsg], status: 1, code : 200 });
+        // }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM portable_charger_history WHERE booking_id = ? AND order_status = "CNF"',[request_id]
         );
@@ -181,11 +181,11 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
-            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 5%' : '0%' ;
+            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
             const htmlUser = `<html>
                 <body>
                     <h4>Dear ${checkOrder.user_name},</h4>
-                    <p>Thank you for choosing our portable charger service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
+                    <p>Thank you for choosing our mobile & portable EV charging service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
                     <p>Booking Details:</p>
                     <p>Booking ID: ${request_id}</p>
                     <p>Date and Time of Service: ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
@@ -194,12 +194,12 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Portable EV Charger', htmlUser);
+            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Mobile & Portable EV Charging Service', htmlUser);
 
             const htmlAdmin = `<html>
                 <body>
                     <h4>Dear Admin,</h4>
-                    <p>We have received a new booking for our Portable Charger service. Please find the details below:</p> 
+                    <p>We have received a new booking for our mobile & portable EV charging service. Please find the details below:</p> 
                     <p>Customer Name       : ${checkOrder.user_name}</p>
                     <p>Contact No.         : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
                     <p>Address             : ${checkOrder.address}</p>            
@@ -214,7 +214,8 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             
             io.emit('notification-list', {msCount : 1});
             // await commitTransaction(conn);
-            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            // let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            let respMsg = "Booking Request Received! Thank you for booking our mobile & portable EV charging service for your EV. Our team will arrive at the scheduled time."; 
             return resp.json({ message: [respMsg], status: 1, code: 200 });
         } else {
             return resp.json({ message: ['Your booking has been already confirmed!'], status: 0, code: 200 });
@@ -252,10 +253,10 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]); // AND rsa.price = "0"
 
-        if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
-            let respMsg = 'We have received your booking and our team will reach out to you soon.'; 
-            return resp.json({ message : [respMsg], status: 1, code : 200 });
-        }
+        // if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
+        //     let respMsg = 'We have received your booking and our team will reach out to you soon.'; 
+        //     return resp.json({ message : [respMsg], status: 1, code : 200 });
+        // }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM order_history WHERE order_id = ? AND order_status = "CNF"',[request_id]
         );

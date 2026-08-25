@@ -46,22 +46,22 @@ export const getPcSlotDateList = asyncHandler(async (req, resp) => {
     const { rider_id } = mergeParam(req);
     try {
         // Portable POD temporarily unavailable
-        const [contentRows] = await db.execute(`
-            SELECT content, additional_content as contact_no
-            FROM response_content
-            WHERE module_name = ? AND response_type = ? AND status = 1
-            ORDER BY id ASC
-        `, [ 'portable-charger', 'service-unavailable' ]);
+        // const [contentRows] = await db.execute(`
+        //     SELECT content, additional_content as contact_no
+        //     FROM response_content
+        //     WHERE module_name = ? AND response_type = ? AND status = 1
+        //     ORDER BY id ASC
+        // `, [ 'portable-charger', 'service-unavailable' ]);
 
-        if (contentRows.length > 0) {
-            const contactRow = contentRows.find(row => row.contact_no);
-            return resp.json({
-                status        : 0,
-                code          : 201,
-                message       : contentRows.map(row => row.content),
-                teamContactNo : contactRow?.contact_no || '',
-            });
-        }
+        // if (contentRows.length > 0) {
+        //     const contactRow = contentRows.find(row => row.contact_no);
+        //     return resp.json({
+        //         status        : 0,
+        //         code          : 201,
+        //         message       : contentRows.map(row => row.content),
+        //         teamContactNo : contactRow?.contact_no || '',
+        //     });
+        // }
 
         if( rider_id == 'ER0654' ) {
             return resp.json({ message : "Slot Date List fetch successfully!", data: [], status: 1, code: 200});
@@ -149,10 +149,11 @@ export const getPcSlotList = asyncHandler(async (req, resp) => {
 });
 
 export const chargerBooking = asyncHandler(async (req, resp) => {
-
-    const { rider_id, user_name, country_code, contact_no, address, latitude, longitude, parking_number= '',
+console.log("chargerBooking", req.body, req.params);
+    let { rider_id, user_name, country_code, contact_no, address, latitude, longitude, parking_number= '',
         parking_floor='', vehicle_id, slot_date, slot_time, slot_id, service_name, service_type, service_feature, service_price= 0, address_id, device_name ='', coupon_code='', battery_percent = 1
     } = mergeParam(req);
+    service_name = service_name || 'Mobile & Portable EV Charging Service';
 
     const { isValid, errors } = validateFields(mergeParam(req), {
         rider_id        : ["required"],
@@ -570,7 +571,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
         const RSAhtml = `<html>
             <body>
                 <h4>Dear ${checkOrder.rsa_name},</h4>
-                <p>This is to inform you that a user has cancelled their booking for the Portable EV Charging Service. Please find the details below:</p>
+                <p>This is to inform you that a user has cancelled their booking for the mobile & portable EV charging service. Please find the details below:</p>
                 <p>Booking Details:</p>
                 <p>Customer Name       : ${checkOrder.user_name}</p>
                 <p>Contact No          : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
@@ -581,12 +582,13 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
                 <p>Best regards,<br/>PlusX Electric Team </p>
             </body>
         </html>`;
-        emailQueue.addEmail(checkOrder.rsa_email, `Portable Charger Service Booking Cancellation (Booking ID: ${booking_id} ) `, RSAhtml);
+        // emailQueue.addEmail(checkOrder.rsa_email, `Portable Charger Service Booking Cancellation (Booking ID: ${booking_id} ) `, RSAhtml); 
+        emailQueue.addEmail(checkOrder.rsa_email, `Mobile & Portable EV Charging Service Booking Cancellation (Booking ID: ${booking_id} ) `, RSAhtml);
      }
     const html = `<html>
         <body>
             <h4>Dear ${checkOrder.user_name},</h4>
-            <p>We would like to inform you that your booking for the portable charger has been successfully cancelled. Below are the details of your cancelled booking:</p>
+            <p>We would like to inform you that your booking for the mobile & portable EV charging service has been successfully cancelled. Below are the details of your cancelled booking:</p>
             <p>Booking ID    : ${booking_id}</p>
             <p>Date and Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
             <p>Thank you for using PlusX Electric. We look forward to serving you again soon.</p>
@@ -597,7 +599,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     const adminHtml = `<html>
         <body>
             <h4>Dear Admin,</h4>
-            <p>This is to inform you that a user has cancelled their booking for the Portable EV Charging Service. Please find the details below:</p>
+            <p>This is to inform you that a user has cancelled their booking for the mobile & portable EV charging service. Please find the details below:</p>
             <p>Booking Details:</p>
             <p>Customer Name       : ${checkOrder.user_name}</p>
             <p>Contact No          : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
@@ -608,7 +610,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
             <p>Best regards,<br/>PlusX Electric Team </p>
         </body>
     </html>`;
-    emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Service Booking Cancellation ( Booking ID : ${booking_id} )`, adminHtml); 
+    emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Mobile & Portable EV Charging Service Booking Cancellation ( Booking ID : ${booking_id} )`, adminHtml); 
     io.emit('notification-list', {msCount : 1});
     return resp.json({ message: ['Your booking has been successfully cancelled.'], status: 1, code: 200 });
 });
@@ -785,7 +787,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
         const htmlUser = `<html>
             <body>
                 <h4>Dear ${checkOrder.user_name},</h4>
-                <p>We would like to confirm that your booking for the Portable EV Charging Service has been successfully rescheduled. Please find the updated details below:</p>
+                <p>We would like to confirm that your booking for the mobile & portable EV charging service has been successfully rescheduled. Please find the updated details below:</p>
                 
                 <p>Booking ID: ${booking_id}</p>
                 <p>Rescheduled Date & Time : ${moment(fSlotDate, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(slot_time, 'HH:mm').format('h:mm A')}</p>
@@ -798,7 +800,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
         const htmlAdmin = `<html>
             <body>
                 <h4>Dear Admin,</h4>
-                <p>This is to inform you that a user has rescheduled their Portable EV Charging Service booking. Please find the updated booking details below:</p> 
+                <p>This is to inform you that a user has rescheduled their mobile & portable EV charging service booking. Please find the updated booking details below:</p> 
                 <p>User Name       : ${checkOrder.user_name}</p>
                 <p>User Contact    : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
                 <p>Booking ID      : ${booking_id}</p>
@@ -809,7 +811,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
                 <p>Best regards,<br/>PlusX Electric Team </p>
             </body>
         </html>`;
-        emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking Rescheduled (Booking ID : ${booking_id} )`, htmlAdmin);
+        emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Mobile & Portable EV Charging Service Booking Rescheduled (Booking ID : ${booking_id} )`, htmlAdmin);
         
         if(checkOrder.rsa_id ){
  
@@ -818,7 +820,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
             const htmlDriver = `<html>
                 <body>
                     <h4>Dear ${checkOrder.rsa_name},</h4>
-                    <p>This is to inform you that a user has rescheduled their Portable EV Charging Service booking. Please find the updated booking details below:</p>
+                    <p>This is to inform you that a user has rescheduled their mobile & portable EV charging service booking. Please find the updated booking details below:</p>
                     
                     <p>User Name       : ${checkOrder.user_name}</p>
                     <p>User Contact    : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
@@ -830,7 +832,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
                     <p>Best regards,<br/> PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(checkOrder.rsa_email, `Portable Charger Booking Rescheduled (Booking ID: ${booking_id})`, htmlDriver);
+            emailQueue.addEmail(checkOrder.rsa_email, `Mobile & Portable EV Charging Service Booking Rescheduled (Booking ID: ${booking_id})`, htmlDriver);
         }
         let respMsg = "Booking request received! Your booking has been successfully rescheduled. Our team will arrive at the updated time.";
 

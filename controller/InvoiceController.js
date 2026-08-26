@@ -39,13 +39,14 @@ export const pickAndDropInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND cs.price = "0"
  
-        // if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
-        //     return resp.json({ 
-        //         message : [`We have received your booking. Our team will get in touch with you soon!`], 
-        //         status  : 1, 
-        //         code    : 200 
-        //     });
-        // }
+        //this line to be commented for payment testing in testing server
+        if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
+            return resp.json({ 
+                message : [`We have received your booking. Our team will get in touch with you soon!`], 
+                status  : 1, 
+                code    : 200 
+            });
+        }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM charging_service_history WHERE service_id = ? AND order_status = "CNF"',[request_id]
         );
@@ -145,10 +146,11 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND pcb.service_price = "0"
 
-        // if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
-        //     let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
-        //     return resp.json({ message : [respMsg], status: 1, code : 200 });
-        // }
+        //this line to be commented for payment testing in testing server
+        if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
+            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            return resp.json({ message : [respMsg], status: 1, code : 200 });
+        }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM portable_charger_history WHERE booking_id = ? AND order_status = "CNF"',[request_id]
         );
@@ -175,10 +177,13 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             await updateRecord('portable_charger_booking', { status : 'CNF', payment_intent_id: paymentIntentId}, ['booking_id', 'rider_id'], [request_id, rider_id] );  //, conn
 
             const href    = 'portable_charger_booking/' + request_id;
-            const heading = 'Portable Charging Booking!';
+            // const heading = 'Portable Charging Booking!';
+            const heading = 'Mobile & Portable EV Charging Service Booking!';
             const desc    = `Booking Confirmed! ${request_id}`;
-            createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
-            createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', rider_id, href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
             const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
@@ -210,7 +215,8 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${request_id}`, htmlAdmin);
+            // emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${request_id}`, htmlAdmin);
+            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Mobile & Portable EV Charging Service Booking - ${request_id}`, htmlAdmin);
             
             io.emit('notification-list', {msCount : 1});
             // await commitTransaction(conn);
@@ -253,10 +259,11 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]); // AND rsa.price = "0"
 
-        // if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
-        //     let respMsg = 'We have received your booking and our team will reach out to you soon.'; 
-        //     return resp.json({ message : [respMsg], status: 1, code : 200 });
-        // }
+        //this line to be commented for payment testing in testing server
+        if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
+            let respMsg = 'We have received your booking and our team will reach out to you soon.'; 
+            return resp.json({ message : [respMsg], status: 1, code : 200 });
+        }
         const ordHistoryCount = await queryDB(
             'SELECT COUNT(*) as count FROM order_history WHERE order_id = ? AND order_status = "CNF"',[request_id]
         );

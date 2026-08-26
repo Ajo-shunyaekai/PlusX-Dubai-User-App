@@ -466,6 +466,42 @@ export const getPcSubscriptionList = asyncHandler(async (req, resp) => {
 });
 
 /* Invoice */
+export const invoiceList = asyncHandler(async (req, resp) => {
+    console.log('invoiceList')
+    const {rider_id, page_no, orderStatus } = mergeParam(req);
+    const { isValid, errors } = validateFields(mergeParam(req), {rider_id: ["required"], page_no: ["required"]});
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    let whereField = ['rider_id'];
+    let whereValue = [rider_id];
+
+    if(orderStatus){
+        whereField.push('payment_status');
+        whereValue.push(orderStatus);
+    }
+    const result = await getPaginatedData({
+        tableName : 'portable_charger_invoice',
+        columns   : `invoice_id, amount, payment_status, invoice_date, currency, 
+            (select concat(user_name, ",", country_code, "-", contact_no) from portable_charger_booking as pcb where pcb.booking_id = portable_charger_invoice.request_id limit 1)
+            AS riderDetails`,
+        sortColumn : 'id',
+        sortOrder  : 'DESC',
+        page_no,
+        limit   : 10,
+        whereField,
+        whereValue
+    });
+
+    return resp.json({
+        status     : 1,
+        code       : 200,
+        message    : ["Pick & Drop Invoice List fetch successfully!"],
+        data       : result.data,
+        total_page : result.totalPage,
+        total      : result.total,
+    });
+});
+
 export const podInvoiceDetails = asyncHandler(async (req, resp) => {
     const {rider_id, booking_id } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {

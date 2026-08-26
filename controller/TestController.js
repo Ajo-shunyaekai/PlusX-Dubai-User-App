@@ -209,7 +209,8 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${booking_id}`, htmlAdmin);
+            // emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${booking_id}`, htmlAdmin);
+            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Mobile & Portable EV Charging Service Booking - ${booking_id}`, htmlAdmin);
             
             io.emit('notification-list', {msCount : 1});
             

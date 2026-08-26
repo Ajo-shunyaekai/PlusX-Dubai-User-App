@@ -148,7 +148,7 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
 
         //this line to be commented for payment testing in testing server
         if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
-            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            let respMsg = "Booking Request Received! Thank you for booking our mobile & portable EV charging service for your EV. Our team will arrive at the scheduled time."; 
             return resp.json({ message : [respMsg], status: 1, code : 200 });
         }
         const ordHistoryCount = await queryDB(

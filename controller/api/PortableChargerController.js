@@ -597,9 +597,11 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     await updateRecord('portable_charger_booking', { status : 'C' }, ['booking_id'], [booking_id]);
     await createportableChargerInvoice(rider_id, booking_id); 
     const href    = `portable_charger_booking/${booking_id}`;
-    const title   = 'Portable Charging Booking!';
+    // const title   = 'Portable Charging Booking!';
+    const title   = 'Mobile & Portable EV Charging Service Booking!';
     const message = `Booking Cancelled : ${booking_id}`;
-    await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+    // await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+    await createNotification(title, message, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
  
     if(checkOrder.rsa_id ||  checkOrder.rsa_id!=null) {
         await db.execute(`DELETE FROM portable_charger_booking_assign WHERE order_id=? AND rider_id=?`, [booking_id, rider_id]);
@@ -690,7 +692,7 @@ export const userFeedbackPCBooking = asyncHandler(async (req, resp) => {
         // const message = `Feedback Received - Booking ID: ${booking_id}.`;
         const title   = `Feedback Received- ${booking_id}`;
         const message = `You've received feedback from a customer`;
-        await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider', rider_id, '', href);
+        await createNotification(title, message, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider', rider_id, '', href);
 
         const adminHtml = `<html>
             <body>
@@ -814,10 +816,13 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
         if(insert.affectedRows == 0) return resp.json({status:0, code:200, message: ["Oops! Something went wrong. Please try again."]});
 
         const href    = 'portable_charger_booking/' + booking_id;
-        const heading = 'Portable Charging Booking!';
+        // const heading = 'Portable Charging Booking!';
+        const heading = 'Mobile & Portable EV Charging Service Booking!';
         const desc    = `Rescheduled Booking Confirmed! ${booking_id}`;
-        createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
-        createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+        // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
+        // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+        createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', rider_id, href);
+        createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
         pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
     
         const htmlUser = `<html>

@@ -346,6 +346,86 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
     }
 });
 
+export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
+    const { rider_id, invoice_id, session_id } = mergeParam(req);
+    const { isValid, errors } = validateFields(mergeParam(req), {
+        rider_id   : ["required"],
+        invoice_id : ["required"],
+        session_id : ["required"]
+    });
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    try {
+        const checkOrder = await queryDB(`
+            SELECT
+                sci.resident_name,
+                sci.resident_email,
+                sci.resident_address,
+                sci.billing_month,
+                sci.area_name,
+                sci.community_name,
+                sci.invoice_status,
+                cl.community_id
+            FROM scan_charger_invoice sci
+            LEFT JOIN community_list cl ON cl.community_name = sci.community_name
+            WHERE sci.invoice_id = ? AND sci.rider_id = ? AND sci.invoice_status = ?
+            LIMIT 1
+        `, [invoice_id, rider_id, 0]);
+
+        if (!checkOrder) {
+            return resp.json({
+                message : ["No pending invoice was found. The payment may have already been completed."],
+                status  : 1,
+                code    : 200
+            });
+        }
+
+        if (checkOrder.community_id) {
+            const residentAccess = await queryDB(`
+                SELECT cr.resident_id
+                FROM riders r
+                INNER JOIN community_resident cr ON cr.resident_mobile = r.rider_mobile
+                INNER JOIN community_resident_map crm
+                    ON crm.resident_id = cr.resident_id AND crm.community_id = ?
+                WHERE r.rider_id = ?
+                LIMIT 1
+            `, [checkOrder.community_id, rider_id]);
+
+            if (!residentAccess) {
+                return resp.json({
+                    message : ["You are not registered as a resident of this community."],
+                    status  : 0,
+                    code    : 422,
+                    error   : true
+                });
+            }
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        const paymentIntentId = session.payment_intent;
+
+        await updateRecord(
+            'scan_charger_invoice',
+            { invoice_status: 1, payment_intent_id: paymentIntentId },
+            ['invoice_id', 'rider_id'],
+            [invoice_id, rider_id]
+        );
+
+        return resp.json({
+            message : ["Your invoice has been paid successfully. Thank you for your payment."],
+            status  : 1,
+            code    : 200,
+            data    : {
+                invoice_id   : invoice_id,
+                community_id : checkOrder.community_id || null,
+            },
+        });
+    } catch (err) {
+        console.error("Transaction failed:", err);
+        tryCatchErrorHandler(err, resp);
+    }
+});
+
 export const scanChargerInvoice = asyncHandler(async (req, resp) => {
     const { rider_id, invoice_id, session_id } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {

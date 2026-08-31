@@ -13,7 +13,7 @@ import { stationList, stationDetail, nearestChargerList } from '../controller/ap
 
 import { serviceRequest, requestList, requestDetails, evChargerList, accessoriesList, evchargerDetails, purchaseHistoryList, purchaseHistoryDetails  } from '../controller/api/ChargingInstallationServiceController.js';
 
-import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoice } from '../controller/InvoiceController.js';
+import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoice, scanChargerInvoiceNew } from '../controller/InvoiceController.js';
 
 import { addInsurance, insuranceList, insuranceDetails } from '../controller/api/EvInsuranceController.js';
 
@@ -34,7 +34,16 @@ import { responseContent, countryList } from '../controller/api/ContentControlle
 import { outputAndConnector, addChargShare, editChargShare, chargeShareList, chargeShareDetail, chargeShareDelete, chargeshareForMap } from '../controller/api/ChargeShareController.js'; 
 //import { makeBookingHistoryPOD, makeBookingHistoryRSA, makeBookingHistoryValet } from '../controller/InvoiceUpdateController.js'; 
 
-import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js'; 
+import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js';
+import {
+    residentCommunities,
+    chargingStart as chargingStartNew,
+    stopCharge as stopChargeNew,
+    chargingDetail as chargingDetailNew,
+    chargingHistory as chargingHistoryNew,
+    scanChargeInvoices as scanChargeInvoicesNew,
+    scanChargeInvoiceDetail as scanChargeInvoiceDetailNew,
+} from '../controller/api/ScanChargerControllerNew.js';
  
 import rateLimit from 'express-rate-limit';
 
@@ -180,6 +189,7 @@ const authzAndAuthRoutes = [
     { method: 'post', path: '/create-pick-drop-invoice',            handler: pickAndDropInvoice },
     { method: 'post', path: '/create-portable-charger-invoice',     handler: portableChargerInvoice },
     { method: 'post', path: '/create-scan-charge-invoice',          handler: scanChargerInvoice },
+    { method: 'post', path: '/create-scan-charge-invoice-new',      handler: scanChargerInvoiceNew },
 
     // EV Charger
     { method: 'get',  path: '/ev-charger-list',    handler: evChargerList },
@@ -205,6 +215,18 @@ const authzAndAuthRoutes = [
     { method: 'get',   path: '/scan-charge-history',        handler: chargingHistory },
     { method: 'get',   path: '/scan-charge-invoice-list',   handler: scanChargeInvoices },
     { method: 'get',   path: '/scan-charge-invoice-detail', handler: scanChargeInvoiceDetail },
+
+
+
+    
+    // Scan Charge (multi-community via community_resident_map)
+    { method: 'get',   path: '/resident-communities',              handler: residentCommunities },
+    { method: 'post',  path: '/start-scan-charge-new',             handler: chargingStartNew },
+    { method: 'post',  path: '/stop-scan-charge-new',              handler: stopChargeNew },
+    { method: 'get',   path: '/scan-charge-detail-new',            handler: chargingDetailNew },
+    { method: 'get',   path: '/scan-charge-history-new',           handler: chargingHistoryNew },
+    { method: 'get',   path: '/scan-charge-invoice-list-new',      handler: scanChargeInvoicesNew },
+    { method: 'get',   path: '/scan-charge-invoice-detail-new',    handler: scanChargeInvoiceDetailNew },
 ];
 
 // Define your upload rules in a config map

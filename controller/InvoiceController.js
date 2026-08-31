@@ -346,6 +346,12 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
     }
 });
 
+/**
+ * POST /create-scan-charge-invoice
+ * Body: rider_id (required), invoice_id (required), session_id (required)
+ * Confirms Stripe payment for a pending scan-charge invoice owned by the rider.
+ * Limits are overall per resident — no per-community payment restriction.
+ */
 export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
     const { rider_id, invoice_id, session_id } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {
@@ -357,18 +363,9 @@ export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
 
     try {
         const checkOrder = await queryDB(`
-            SELECT
-                sci.resident_name,
-                sci.resident_email,
-                sci.resident_address,
-                sci.billing_month,
-                sci.area_name,
-                sci.community_name,
-                sci.invoice_status,
-                cl.community_id
-            FROM scan_charger_invoice sci
-            LEFT JOIN community_list cl ON cl.community_name = sci.community_name
-            WHERE sci.invoice_id = ? AND sci.rider_id = ? AND sci.invoice_status = ?
+            SELECT invoice_id, invoice_status, community_name, area_name
+            FROM scan_charger_invoice
+            WHERE invoice_id = ? AND rider_id = ? AND invoice_status = ?
             LIMIT 1
         `, [invoice_id, rider_id, 0]);
 
@@ -378,27 +375,6 @@ export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
                 status  : 1,
                 code    : 200
             });
-        }
-
-        if (checkOrder.community_id) {
-            const residentAccess = await queryDB(`
-                SELECT cr.resident_id
-                FROM riders r
-                INNER JOIN community_resident cr ON cr.resident_mobile = r.rider_mobile
-                INNER JOIN community_resident_map crm
-                    ON crm.resident_id = cr.resident_id AND crm.community_id = ?
-                WHERE r.rider_id = ?
-                LIMIT 1
-            `, [checkOrder.community_id, rider_id]);
-
-            if (!residentAccess) {
-                return resp.json({
-                    message : ["You are not registered as a resident of this community."],
-                    status  : 0,
-                    code    : 422,
-                    error   : true
-                });
-            }
         }
 
         const session = await stripe.checkout.sessions.retrieve(session_id);
@@ -415,10 +391,7 @@ export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
             message : ["Your invoice has been paid successfully. Thank you for your payment."],
             status  : 1,
             code    : 200,
-            data    : {
-                invoice_id   : invoice_id,
-                community_id : checkOrder.community_id || null,
-            },
+            data    : { invoice_id },
         });
     } catch (err) {
         console.error("Transaction failed:", err);

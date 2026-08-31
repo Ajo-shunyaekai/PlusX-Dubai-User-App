@@ -1,3 +1,38 @@
+/**
+ * Scan Charge Controller (multi-community)
+ *
+ * Data model:
+ * - community_resident        → one row per resident (overall limits: sessions, time, kWh, pricing)
+ * - community_resident_map    → many rows per resident (which communities they may charge at)
+ *
+ * Rules:
+ * - Access: resident must have a map entry for the charger's community
+ * - Limits: monthly session allocation is OVERALL (all communities combined), not per community
+ *
+ * ─── API params (unchanged from legacy app; no community_id required) ───
+ *
+ * GET  /resident-communities
+ *   Query: rider_id (required)
+ *
+ * POST /start-scan-charge
+ *   Body: rider_id (required), charger_id (required)
+ *
+ * POST /stop-scan-charge
+ *   Body: rider_id (required), booking_id (required)
+ *
+ * GET  /scan-charge-detail
+ *   Query: rider_id (required), booking_id (required)
+ *
+ * GET  /scan-charge-history
+ *   Query: rider_id (required), resident_mobile (required), page_no (optional), limit (optional)
+ *
+ * GET  /scan-charge-invoice-list
+ *   Query: rider_id (required), page_no (optional), limit (optional)
+ *
+ * GET  /scan-charge-invoice-detail
+ *   Query: rider_id (required), invoice_id (required)
+ */
+
 import { mergeParam, formatDateTimeInQuery } from "../../utils.js";
 import validateFields from "../../validation.js";
 import { insertRecord, queryDB, updateRecord } from '../../dbUtils.js';
@@ -8,12 +43,17 @@ import { tryCatchErrorHandler } from "../../middleware/errorHandler.js";
 
 import client from "../../server.js";
 
+/** Current billing month range (Dubai offset applied in legacy logic). */
 const getMonthRange = () => {
     const startDate = moment().startOf("month").subtract(4, "hours").format("YYYY-MM-DD HH:mm:ss");
     const endDate   = moment().endOf("month").subtract(4, "hours").format("YYYY-MM-DD HH:mm:ss");
     return { startDate, endDate };
 };
 
+/**
+ * GET /resident-communities
+ * Optional display API — lists mapped communities; limits are returned once (overall pool).
+ */
 export const residentCommunities = async (req, resp) => {
     try {
         const { rider_id } = mergeParam(req);
@@ -23,11 +63,8 @@ export const residentCommunities = async (req, resp) => {
         });
         if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
-        const [communities] = await db.execute(`
+        const residentLimits = await queryDB(`
             SELECT
-                cl.community_id,
-                cl.community_name,
-                cl.area_name,
                 cr.resident_id,
                 cr.monthly_session_allocation,
                 cr.alloted_time,
@@ -36,8 +73,25 @@ export const residentCommunities = async (req, resp) => {
                 cr.extra_charge
             FROM riders r
             INNER JOIN community_resident cr ON cr.resident_mobile = r.rider_mobile
+            WHERE r.rider_id = ?
+            LIMIT 1`, [rider_id]
+        );
+
+        if (!residentLimits) {
+            return resp.json({
+                status  : 1,
+                code    : 200,
+                message : ["Resident communities fetched successfully."],
+                data    : { community_count: 0, communities: [] },
+            });
+        }
+
+        const [communities] = await db.execute(`
+            SELECT cl.community_id, cl.community_name, cl.area_name
+            FROM community_resident cr
             INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
             INNER JOIN community_list cl ON cl.community_id = crm.community_id
+            INNER JOIN riders r ON r.rider_mobile = cr.resident_mobile
             WHERE r.rider_id = ?
             ORDER BY cl.community_name ASC
         `, [rider_id]);
@@ -47,7 +101,12 @@ export const residentCommunities = async (req, resp) => {
             code    : 200,
             message : ["Resident communities fetched successfully."],
             data    : {
-                community_count : communities.length,
+                community_count            : communities.length,
+                monthly_session_allocation : residentLimits.monthly_session_allocation,
+                alloted_time               : residentLimits.alloted_time,
+                kwh_allocated                : residentLimits.kwh_allocated,
+                per_kwh_charge               : residentLimits.per_kwh_charge,
+                extra_charge                 : residentLimits.extra_charge,
                 communities,
             },
         });
@@ -57,6 +116,10 @@ export const residentCommunities = async (req, resp) => {
     }
 };
 
+/**
+ * POST /start-scan-charge
+ * Access via community_resident_map; session limit counted across ALL communities.
+ */
 export const chargingStart = async (req, resp) => {
     try {
         const { rider_id, charger_id } = mergeParam(req);
@@ -67,6 +130,7 @@ export const chargingStart = async (req, resp) => {
         });
         if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
+        // Map join ensures resident is allowed at this charger's community; limits from single resident row
         const chargeData = await queryDB(`
             SELECT
                 cr.resident_id, cr.resident_name, cr.resident_mobile, cr.resident_email, cr.address,
@@ -96,17 +160,15 @@ export const chargingStart = async (req, resp) => {
 
         const { startDate, endDate } = getMonthRange();
 
+        // Overall monthly session count — sessions at any mapped community count toward the same limit
         const sessionChecks = await queryDB(`
             SELECT
                 ( SELECT COUNT(*) FROM scan_charger_booking WHERE rider_id = ? AND status = ? ) AS active_session,
-                ( SELECT COUNT(*)
-                  FROM scan_charger_booking scb
-                  INNER JOIN community_chargers cc ON cc.charger_id = scb.charger_id
-                  WHERE scb.rider_id = ? AND cc.community_id = ?
-                    AND scb.created_at BETWEEN ? AND ? AND scb.status <> 'F'
+                ( SELECT COUNT(*) FROM scan_charger_booking
+                  WHERE rider_id = ? AND created_at BETWEEN ? AND ? AND status <> 'F'
                 ) AS total_session,
                 ( SELECT COUNT(*) FROM scan_charger_booking WHERE charger_id = ? AND status = ? ) AS chek_charger_booking
-        `, [rider_id, "S", rider_id, chargeData.community_id, startDate, endDate, charger_id, "S"]
+        `, [rider_id, "S", rider_id, startDate, endDate, charger_id, "S"]
         );
 
         if (sessionChecks?.active_session > 0) {
@@ -139,6 +201,7 @@ export const chargingStart = async (req, resp) => {
         }
 
         const start_time = moment().tz('Asia/Dubai').format("YYYY-MM-DD HH:mm:ss");
+        // Snapshot resident config + charger community (for display on this session only)
         const resident_data = {
             community_id               : chargeData.community_id,
             community_name             : chargeData.community_name,
@@ -186,11 +249,12 @@ export const chargingStart = async (req, resp) => {
             message      : ["Charging started successfully, you can track real-time speed on the app."],
         });
     } catch (error) {
-        console.log('Something went wrong in chargingStart (new)', error);
+        console.log('Something went wrong in chargingStart', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };
 
+/** Auto-fail session if no energy increase within ~3 minutes after start. */
 export const startChargingCheck = async (charger_id, booking_id) => {
     try {
         const chargingData = await queryDB(`
@@ -232,6 +296,7 @@ export const startChargingCheck = async (charger_id, booking_id) => {
     }
 };
 
+/** POST /stop-scan-charge — Body: rider_id, booking_id */
 export const stopCharge = async (req, resp) => {
     try {
         const { rider_id, booking_id } = mergeParam(req);
@@ -284,11 +349,12 @@ export const stopCharge = async (req, resp) => {
         client.publish(`/supro/EVONE/${chargingData.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
         return resp.json({ status: 1, code: 200, message: ["Charging Stop successfully."] });
     } catch (error) {
-        console.log('Something went wrong in stopCharge (new)', error);
+        console.log('Something went wrong in stopCharge', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };
 
+/** GET /scan-charge-detail — Query: rider_id, booking_id */
 export const chargingDetail = async (req, resp) => {
     try {
         const { rider_id, booking_id } = mergeParam(req);
@@ -336,10 +402,10 @@ export const chargingDetail = async (req, resp) => {
             LIMIT 1`, [chargingData.charger_id]
         );
 
-        const currentReading  = chargeData?.energy || 0;
-        const start_time      = moment(chargingData?.start_time, "YYYY-MM-DD HH:mm:ss");
-        const end_time        = moment().subtract(1, "hour").subtract(30, "minutes");
-        const diffInMinutes   = end_time.diff(start_time, "minutes");
+        const currentReading    = chargeData?.energy || 0;
+        const start_time        = moment(chargingData?.start_time, "YYYY-MM-DD HH:mm:ss");
+        const end_time          = moment().subtract(1, "hour").subtract(30, "minutes");
+        const diffInMinutes     = end_time.diff(start_time, "minutes");
         const total_consumption = parseFloat(currentReading) - parseFloat(chargingData?.start_kwh);
         const per_kwh_charge    = chargingData?.per_kwh_charge || 0;
 
@@ -361,14 +427,19 @@ export const chargingDetail = async (req, resp) => {
             },
         });
     } catch (error) {
-        console.log('Something went wrong in chargingDetail (new)', error);
+        console.log('Something went wrong in chargingDetail', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };
 
+/**
+ * GET /scan-charge-history
+ * Overall limits + all completed sessions (no community filter).
+ * Params: rider_id, resident_mobile, page_no (optional), limit (optional)
+ */
 export const chargingHistory = async (req, resp) => {
     try {
-        const { rider_id, resident_mobile, community_id, page_no = 1, limit = 2 } = mergeParam(req);
+        const { rider_id, resident_mobile, page_no = 1, limit = 2 } = mergeParam(req);
 
         const { isValid, errors } = validateFields(mergeParam(req), {
             rider_id        : ["required"],
@@ -377,97 +448,34 @@ export const chargingHistory = async (req, resp) => {
         if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
         const { startDate, endDate } = getMonthRange();
-        let resolvedCommunityId = community_id || null;
-
-        if (!resolvedCommunityId) {
-            const [mappedCommunities] = await db.execute(`
-                SELECT crm.community_id
-                FROM community_resident cr
-                INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                WHERE cr.resident_mobile = ?
-            `, [resident_mobile]);
-
-            if (!mappedCommunities.length) {
-                return resp.json({ message: ["No Resident found."], status: 0, code: 422, error: true });
-            }
-            if (mappedCommunities.length === 1) {
-                resolvedCommunityId = mappedCommunities[0].community_id;
-            }
-        }
-
         const offset = (page_no - 1) * limit;
-        let residentData;
-        let chargingData;
 
-        if (resolvedCommunityId) {
-            residentData = await queryDB(`
-                SELECT
-                    cr.monthly_session_allocation,
-                    cl.community_id,
-                    cl.community_name,
-                    cl.area_name,
-                    ( SELECT COUNT(*)
-                      FROM scan_charger_booking scb
-                      INNER JOIN community_chargers cc ON cc.charger_id = scb.charger_id
-                      WHERE scb.rider_id = ? AND cc.community_id = ?
-                        AND scb.created_at BETWEEN ? AND ? AND scb.status <> 'F'
-                    ) AS used_session
-                FROM community_resident cr
-                INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                INNER JOIN community_list cl ON cl.community_id = crm.community_id
-                WHERE cr.resident_mobile = ? AND crm.community_id = ?
-                LIMIT 1`, [rider_id, resolvedCommunityId, startDate, endDate, resident_mobile, resolvedCommunityId]
-            );
+        const residentData = await queryDB(`
+            SELECT
+                cr.monthly_session_allocation,
+                ( SELECT COUNT(*) FROM scan_charger_booking
+                  WHERE rider_id = ? AND created_at BETWEEN ? AND ? AND status <> 'F'
+                ) AS used_session
+            FROM community_resident cr
+            WHERE cr.resident_mobile = ?
+            LIMIT 1`, [rider_id, startDate, endDate, resident_mobile]
+        );
 
-            if (!residentData) {
-                return resp.json({ message: ["No Resident found for this community."], status: 0, code: 422, error: true });
-            }
-
-            [chargingData] = await db.execute(`
-                SELECT SQL_CALC_FOUND_ROWS
-                    scb.booking_id,
-                    ${formatDateTimeInQuery(['scb.created_at'])},
-                    scb.total_consumption,
-                    scb.total_duration
-                FROM scan_charger_booking scb
-                INNER JOIN community_chargers cc ON cc.charger_id = scb.charger_id
-                WHERE scb.rider_id = ? AND scb.status = ? AND cc.community_id = ?
-                ORDER BY scb.id DESC
-                LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id, "C", resolvedCommunityId]
-            );
-        } else {
-            residentData = await queryDB(`
-                SELECT
-                    cr.monthly_session_allocation,
-                    NULL AS community_id,
-                    NULL AS community_name,
-                    NULL AS area_name,
-                    ( SELECT COUNT(*)
-                      FROM scan_charger_booking scb
-                      WHERE scb.rider_id = ?
-                        AND scb.created_at BETWEEN ? AND ? AND scb.status <> 'F'
-                    ) AS used_session
-                FROM community_resident cr
-                WHERE cr.resident_mobile = ?
-                LIMIT 1`, [rider_id, startDate, endDate, resident_mobile]
-            );
-
-            if (!residentData) {
-                return resp.json({ message: ["No Resident found."], status: 0, code: 422, error: true });
-            }
-
-            [chargingData] = await db.execute(`
-                SELECT SQL_CALC_FOUND_ROWS
-                    booking_id,
-                    ${formatDateTimeInQuery(['created_at'])},
-                    total_consumption,
-                    total_duration
-                FROM scan_charger_booking
-                WHERE rider_id = ? AND status = ?
-                ORDER BY id DESC
-                LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id, "C"]
-            );
+        if (!residentData) {
+            return resp.json({ message: ["No Resident found."], status: 0, code: 422, error: true });
         }
+
+        const [chargingData] = await db.execute(`
+            SELECT SQL_CALC_FOUND_ROWS
+                booking_id,
+                ${formatDateTimeInQuery(['created_at'])},
+                total_consumption,
+                total_duration
+            FROM scan_charger_booking
+            WHERE rider_id = ? AND status = ?
+            ORDER BY id DESC
+            LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id, "C"]
+        );
 
         const [[{ total }]] = await db.query('SELECT FOUND_ROWS() AS total');
         const totalPage = Math.max(Math.ceil(total / limit), 1);
@@ -478,9 +486,6 @@ export const chargingHistory = async (req, resp) => {
             code    : 200,
             message : ["Charging Data"],
             data    : {
-                community_id    : residentData.community_id,
-                community_name  : residentData.community_name,
-                area_name       : residentData.area_name,
                 total_session   : residentData.monthly_session_allocation,
                 used_session    : residentData.used_session,
                 pending_session : pending_session.toFixed(0),
@@ -490,14 +495,15 @@ export const chargingHistory = async (req, resp) => {
             },
         });
     } catch (error) {
-        console.log('Something went wrong in chargingHistory (new)', error);
+        console.log('Something went wrong in chargingHistory', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };
 
+/** GET /scan-charge-invoice-list — Query: rider_id, page_no (optional), limit (optional) */
 export const scanChargeInvoices = async (req, resp) => {
     try {
-        const { rider_id, community_id, page_no = 1, limit = 10 } = mergeParam(req);
+        const { rider_id, page_no = 1, limit = 10 } = mergeParam(req);
 
         const { isValid, errors } = validateFields(mergeParam(req), {
             rider_id: ["required"],
@@ -505,16 +511,6 @@ export const scanChargeInvoices = async (req, resp) => {
         if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
         const offset = (page_no - 1) * limit;
-        const params = [rider_id];
-        let communityFilter = '';
-
-        if (community_id) {
-            communityFilter = `
-                AND sci.community_name = (
-                    SELECT community_name FROM community_list WHERE community_id = ? LIMIT 1
-                )`;
-            params.push(community_id);
-        }
 
         const [invoiceData] = await db.execute(`
             SELECT SQL_CALC_FOUND_ROWS
@@ -525,13 +521,11 @@ export const scanChargeInvoices = async (req, resp) => {
                 sci.total_amount,
                 sci.community_name,
                 sci.area_name,
-                cl.community_id,
                 ${formatDateTimeInQuery(['sci.created_at'])}
             FROM scan_charger_invoice sci
-            LEFT JOIN community_list cl ON cl.community_name = sci.community_name
-            WHERE sci.rider_id = ? ${communityFilter}
+            WHERE sci.rider_id = ?
             ORDER BY sci.id DESC
-            LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, params
+            LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id]
         );
 
         const [[{ total }]] = await db.query('SELECT FOUND_ROWS() AS total');
@@ -544,11 +538,12 @@ export const scanChargeInvoices = async (req, resp) => {
             data    : { invoice_list: invoiceData, total, totalPage },
         });
     } catch (error) {
-        console.log('Something went wrong in scanChargeInvoices (new)', error);
+        console.log('Something went wrong in scanChargeInvoices', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };
 
+/** GET /scan-charge-invoice-detail — Query: rider_id, invoice_id */
 export const scanChargeInvoiceDetail = async (req, resp) => {
     try {
         const { rider_id, invoice_id } = mergeParam(req);
@@ -578,10 +573,8 @@ export const scanChargeInvoiceDetail = async (req, resp) => {
                 sci.total_amount,
                 sci.community_name,
                 sci.area_name,
-                cl.community_id,
                 ${formatDateTimeInQuery(['sci.created_at'])}
             FROM scan_charger_invoice sci
-            LEFT JOIN community_list cl ON cl.community_name = sci.community_name
             WHERE sci.rider_id = ? AND sci.invoice_id = ?`, [rider_id, invoice_id]
         );
 
@@ -591,7 +584,7 @@ export const scanChargeInvoiceDetail = async (req, resp) => {
 
         return resp.json({ status: 1, code: 200, message: ["Invoice Data"], data: invoiceData });
     } catch (error) {
-        console.log('Something went wrong in scanChargeInvoiceDetail (new)', error);
+        console.log('Something went wrong in scanChargeInvoiceDetail', error);
         tryCatchErrorHandler(req.originalUrl, error, resp);
     }
 };

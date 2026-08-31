@@ -13,7 +13,9 @@ import { stationList, stationDetail, nearestChargerList } from '../controller/ap
 
 import { serviceRequest, requestList, requestDetails, evChargerList, accessoriesList, evchargerDetails, purchaseHistoryList, purchaseHistoryDetails  } from '../controller/api/ChargingInstallationServiceController.js';
 
-import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoice, scanChargerInvoiceNew } from '../controller/InvoiceController.js';
+import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoiceNew } from '../controller/InvoiceController.js';
+// Legacy scan invoice (no map-table awareness)
+// import { scanChargerInvoice } from '../controller/InvoiceController.js';
 
 import { addInsurance, insuranceList, insuranceDetails } from '../controller/api/EvInsuranceController.js';
 
@@ -34,15 +36,17 @@ import { responseContent, countryList } from '../controller/api/ContentControlle
 import { outputAndConnector, addChargShare, editChargShare, chargeShareList, chargeShareDetail, chargeShareDelete, chargeshareForMap } from '../controller/api/ChargeShareController.js'; 
 //import { makeBookingHistoryPOD, makeBookingHistoryRSA, makeBookingHistoryValet } from '../controller/InvoiceUpdateController.js'; 
 
-import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js';
+// Legacy scan-charge (single community_resident.community_id join) — replaced by ScanChargerControllerNew.js
+// import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js';
+
 import {
     residentCommunities,
-    chargingStart as chargingStartNew,
-    stopCharge as stopChargeNew,
-    chargingDetail as chargingDetailNew,
-    chargingHistory as chargingHistoryNew,
-    scanChargeInvoices as scanChargeInvoicesNew,
-    scanChargeInvoiceDetail as scanChargeInvoiceDetailNew,
+    chargingStart,
+    stopCharge,
+    chargingDetail,
+    chargingHistory,
+    scanChargeInvoices,
+    scanChargeInvoiceDetail,
 } from '../controller/api/ScanChargerControllerNew.js';
  
 import rateLimit from 'express-rate-limit';
@@ -184,12 +188,11 @@ const authzAndAuthRoutes = [
     { method: 'post', path: '/get-payment-session-data',             handler: getPaymentSessionData },
     { method: 'post', path: '/get-payment-data',                     handler: getPaymentdetails },
 
-    /* Invoice */ 
+    /* Invoice */
     { method: 'post', path: '/create-rsa-invoice',                  handler: rsaInvoice },
     { method: 'post', path: '/create-pick-drop-invoice',            handler: pickAndDropInvoice },
     { method: 'post', path: '/create-portable-charger-invoice',     handler: portableChargerInvoice },
-    { method: 'post', path: '/create-scan-charge-invoice',          handler: scanChargerInvoice },
-    { method: 'post', path: '/create-scan-charge-invoice-new',      handler: scanChargerInvoiceNew },
+    { method: 'post', path: '/create-scan-charge-invoice',          handler: scanChargerInvoiceNew },
 
     // EV Charger
     { method: 'get',  path: '/ev-charger-list',    handler: evChargerList },
@@ -208,25 +211,22 @@ const authzAndAuthRoutes = [
     { method: 'post',  path: '/charge-share-edit',    handler: editChargShare },
     { method: 'post',  path: '/charge-share-delete',  handler: chargeShareDelete },
 
-    // Scan Charge
-    { method: 'post',  path: '/start-scan-charge',          handler: chargingStart },
-    { method: 'post',  path: '/stop-scan-charge',           handler: stopCharge },
-    { method: 'get',   path: '/scan-charge-detail',         handler: chargingDetail },
-    { method: 'get',   path: '/scan-charge-history',        handler: chargingHistory },
-    { method: 'get',   path: '/scan-charge-invoice-list',   handler: scanChargeInvoices },
-    { method: 'get',   path: '/scan-charge-invoice-detail', handler: scanChargeInvoiceDetail },
+    // Scan Charge — multi-community access via community_resident_map; overall limits on community_resident
+    { method: 'get',   path: '/resident-communities',         handler: residentCommunities },
+    { method: 'post',  path: '/start-scan-charge',            handler: chargingStart },
+    { method: 'post',  path: '/stop-scan-charge',             handler: stopCharge },
+    { method: 'get',   path: '/scan-charge-detail',           handler: chargingDetail },
+    { method: 'get',   path: '/scan-charge-history',          handler: chargingHistory },
+    { method: 'get',   path: '/scan-charge-invoice-list',     handler: scanChargeInvoices },
+    { method: 'get',   path: '/scan-charge-invoice-detail',   handler: scanChargeInvoiceDetail },
 
-
-
-    
-    // Scan Charge (multi-community via community_resident_map)
-    { method: 'get',   path: '/resident-communities',              handler: residentCommunities },
-    { method: 'post',  path: '/start-scan-charge-new',             handler: chargingStartNew },
-    { method: 'post',  path: '/stop-scan-charge-new',              handler: stopChargeNew },
-    { method: 'get',   path: '/scan-charge-detail-new',            handler: chargingDetailNew },
-    { method: 'get',   path: '/scan-charge-history-new',           handler: chargingHistoryNew },
-    { method: 'get',   path: '/scan-charge-invoice-list-new',      handler: scanChargeInvoicesNew },
-    { method: 'get',   path: '/scan-charge-invoice-detail-new',    handler: scanChargeInvoiceDetailNew },
+    // Legacy duplicate -new routes (same handlers as above; kept commented for reference)
+    // { method: 'post',  path: '/start-scan-charge-new',             handler: chargingStart },
+    // { method: 'post',  path: '/stop-scan-charge-new',              handler: stopCharge },
+    // { method: 'get',   path: '/scan-charge-detail-new',            handler: chargingDetail },
+    // { method: 'get',   path: '/scan-charge-history-new',           handler: chargingHistory },
+    // { method: 'get',   path: '/scan-charge-invoice-list-new',      handler: scanChargeInvoices },
+    // { method: 'get',   path: '/scan-charge-invoice-detail-new',    handler: scanChargeInvoiceDetail },
 ];
 
 // Define your upload rules in a config map

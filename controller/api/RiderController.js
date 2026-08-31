@@ -128,13 +128,14 @@ export const register = asyncHandler(async (req, resp) => {
 
     delOTP(fullMobile);
 
+    // Resident if community_resident row exists (map may be populated by admin after signup)
     const rsidentData = await queryDB(`
-        SELECT resident_name 
-        FROM community_resident 
-        WHERE resident_mobile = ? `,
+        SELECT resident_name
+        FROM community_resident
+        WHERE resident_mobile = ?`,
         [ rider_mobile ]
     );
-    
+
     const result = {
         image_url    : `${process.env.DIR_UPLOADS}rider_profile/`,
         rider_id     : riderId,
@@ -249,13 +250,27 @@ export const verifyOTP = asyncHandler(async (req, resp) => {
     });
     if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
+    // is_resident > 0 when mapped to any community (multi-community aware)
     const riderData = await queryDB(`
-        SELECT 
+        SELECT
             rider_id, rider_name, last_name, rider_email, profile_img, country, emirates, status,
-            (SELECT count(*) FROM community_resident WHERE resident_mobile = ?) as resident_count  
-        FROM riders 
+            ( SELECT CASE
+                WHEN ( SELECT COUNT(DISTINCT crm.community_id)
+                       FROM community_resident cr
+                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                       WHERE cr.resident_mobile = ? ) > 0
+                THEN ( SELECT COUNT(DISTINCT crm.community_id)
+                       FROM community_resident cr
+                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                       WHERE cr.resident_mobile = ? )
+                WHEN EXISTS ( SELECT 1 FROM community_resident WHERE resident_mobile = ? )
+                THEN 1
+                ELSE 0
+              END
+            ) AS resident_count
+        FROM riders
         WHERE rider_mobile = ? AND country_code = ?
-        LIMIT 1`, [mobile, mobile, country_code]
+        LIMIT 1`, [mobile, mobile, mobile, mobile, country_code]
     );
 
     if(!riderData) return resp.json({ 
@@ -372,9 +387,22 @@ export const home = asyncHandler(async (req, resp) => {
     const {rider_id} = mergeParam(req);
     if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
     
-    const riderQuery = `SELECT rider_id, rider_name, 
+    const riderQuery = `SELECT rider_id, rider_name,
         (SELECT COUNT(*) FROM notifications AS n WHERE n.panel_to = 'Rider' AND n.receive_id = rider_id AND status = '0') AS notification_count,
-        (SELECT count(*) FROM community_resident WHERE resident_mobile = riders.rider_mobile) as resident_count,
+        ( SELECT CASE
+            WHEN ( SELECT COUNT(DISTINCT crm.community_id)
+                   FROM community_resident cr
+                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                   WHERE cr.resident_mobile = riders.rider_mobile ) > 0
+            THEN ( SELECT COUNT(DISTINCT crm.community_id)
+                   FROM community_resident cr
+                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                   WHERE cr.resident_mobile = riders.rider_mobile )
+            WHEN EXISTS ( SELECT 1 FROM community_resident cr2 WHERE cr2.resident_mobile = riders.rider_mobile )
+            THEN 1
+            ELSE 0
+          END
+        ) AS resident_count,
         (SELECT COUNT(*) FROM purchase_history AS pu WHERE pu.customer_mobile = riders.rider_mobile ) AS purchase_history_count,
         (SELECT COUNT(*) FROM charge_share AS cs WHERE cs.rider_id = ? AND cs.charger_status = 1) AS charge_share_count
         FROM riders WHERE rider_id = ?

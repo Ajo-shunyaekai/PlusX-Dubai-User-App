@@ -25,7 +25,7 @@ import { addRoadAssistance, roadAssistanceList, roadAssistanceDetail, roadAssist
 
 import {vehicleList, vehicleDetail, areaList, vehicleModelList, vehicleBrandList, dubaiAreaList } from '../controller/api/VehicleController.js';
 
-import { chargerList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
+import { chargerList, packageList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
 
 import { getChargingServiceSlotList, requestService, listServices, getServiceOrderDetail, getInvoiceDetail, cancelValetBooking, userFeedbackValetBooking, rescheduleService, getChargingServiceDateList
 } from '../controller/api/ChargingServiceController.js';
@@ -156,6 +156,7 @@ const authzAndAuthRoutes = [
 
     /* Portable charger */
     { method: 'get',  path: '/portable-charger-list',            handler: chargerList },
+    { method: 'get',  path: '/charging-package-list',    handler: packageList },
     { method: 'post', path: '/portable-charger-booking',         handler: chargerBooking },
     { method: 'get',  path: '/portable-charger-booking-list',    handler: chargerBookingList },
     { method: 'get',  path: '/portable-charger-booking-detail',  handler: chargerBookingDetail },

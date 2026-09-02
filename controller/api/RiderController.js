@@ -473,7 +473,7 @@ export const home = asyncHandler(async (req, resp) => {
         roadside_assistance_price : priceData.slot_price || 0,
         portable_price            : portablePrice,
         portable_original_price   : portableOriginalPrice, // striked display price
-        portable_discount_amount  : portableDiscountAmount, //discount amount
+        portable_discount_amount  : portableDiscountAmount, // discount amount
         pick_drop_price           : priceData.pick_drop_price,
         status                    : 1,
         code                      : 200,

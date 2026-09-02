@@ -152,7 +152,7 @@ export const responseContent = asyncHandler(async (req, resp) => {
             discount_amount  : discount_amount,
             slotErrMsg       : priceErrMsg,
             // zeroPercentModal : 'If your EV has 0% battery, the portable power service will not work. Kindly book our Roadside (Emergency) EV charging service.',
-            zeroPercentModal : 'If your EV has less than 10% battery, the mobile & portable EV charging service will not work. Kindly book our Roadside Assistance (Emergency) EV Charging service.',
+           zeroPercentModal : 'If your EV has less than 10% battery, the mobile & portable EV charging service will not work. Kindly book our Roadside Assistance (Emergency) EV Charging service.',
             ...(contactNo ? { teamContactNo: contactNo } : {}),
         };
     };

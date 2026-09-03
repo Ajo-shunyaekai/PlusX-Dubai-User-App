@@ -395,6 +395,8 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
                     package_name,
                     charging_capacity,
                     price,
+                    price_per_unit,
+                    service_fee,
                     description
                 FROM portable_charger_charging_packages
                 WHERE package_id = ? AND status = 1 AND is_deleted = 0 AND order_id IS NULL`, [package_id]
@@ -501,7 +503,7 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
                 vat_amount       : vatAmt,
                 gross_amount     : grossAmount,
                 coupon_code      : coupon_code || "",
-                coupon_discount  : couponDiscount,
+                discount_amt     : couponDiscount,
                 total_amount     : payableAmount,
                 payable_amount   : payableAmount,
             };
@@ -631,6 +633,10 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
     booking.package_data = rawPackageData
         ? (typeof rawPackageData === 'string' ? JSON.parse(rawPackageData) : rawPackageData)
         : null;
+    if (booking.package_data && booking.package_data.price != null) {
+        booking.package_data.charging_fee = booking.package_data.price;
+        delete booking.package_data.price;
+    }
     if(booking.vehicle_data == '' || booking.vehicle_data == null) {
         const vehicledata = await queryDB(`
             SELECT                 
@@ -769,7 +775,8 @@ export const podInvoiceDetails = asyncHandler(async (req, resp) => {
 
     data.vat_amount   = data.price_details.vat_amount ; 
     data.discount_amt = data.price_details.discount_amt ; 
-    data.price        = Math.round(data.price_details.total_price) ; 
+    // data.price        = Math.round(data.price_details.total_price) ; 
+    data.price        = parseFloat(data.price_details.total_price).toFixed(2) ; 
     
     data.vat_percetange = '5%';
 
@@ -833,7 +840,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     const title   = 'Mobile & Portable EV Charging Service Booking!';
     const message = `Booking Cancelled : ${booking_id}`;
     // await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
-    await createNotification(title, message, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
+    await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
  
     if(checkOrder.rsa_id ||  checkOrder.rsa_id!=null) {
         await db.execute(`DELETE FROM portable_charger_booking_assign WHERE order_id=? AND rider_id=?`, [booking_id, rider_id]);
@@ -924,7 +931,7 @@ export const userFeedbackPCBooking = asyncHandler(async (req, resp) => {
         // const message = `Feedback Received - Booking ID: ${booking_id}.`;
         const title   = `Feedback Received- ${booking_id}`;
         const message = `You've received feedback from a customer`;
-        await createNotification(title, message, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider', rider_id, '', href);
+        await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider', rider_id, '', href);
 
         const adminHtml = `<html>
             <body>
@@ -1053,8 +1060,8 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
         const desc    = `Rescheduled Booking Confirmed! ${booking_id}`;
         // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
         // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
-        createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', rider_id, href);
-        createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
+        createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
+        createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
         pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
     
         const htmlUser = `<html>

@@ -81,10 +81,9 @@ export const chargingStart = async (req, resp) => {
         }
         const chargeMeterData = await queryDB(`
             SELECT energy
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ? AND updated_at >= NOW() - INTERVAL 5 MINUTE
-            ORDER BY id DESC
-            LIMIT 1 `, [ charger_id] 
+            LIMIT 1 `, [ charger_id]
         );
         if(!chargeMeterData) {
 
@@ -152,7 +151,7 @@ export const startChargingCheck = async (charger_id, booking_id) => {
         const chargingData = await queryDB(`
             SELECT 
                 start_time, start_kwh,
-                (SELECT energy from scan_charger_data WHERE charger_id = ? ORDER BY id DESC LIMIT 1 ) as energy 
+                (SELECT energy FROM community_chargers WHERE charger_id = ? LIMIT 1) AS energy 
             FROM scan_charger_booking b 
             WHERE booking_id = ? AND b.status = ? AND b.created_at >= NOW() - INTERVAL 4 MINUTE
             LIMIT 1 `, [ charger_id, booking_id, 'S' ]
@@ -213,10 +212,9 @@ export const stopCharge = async (req, resp) => {
 
         const chargeData = await queryDB(`
             SELECT energy
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ?
-            ORDER BY id DESC
-            LIMIT 1 `, [ chargingData.charger_id] 
+            LIMIT 1 `, [ chargingData.charger_id]
         );
         const currentReading = chargeData?.energy || 0;
         const start_time    = moment(chargingData?.start_time, "YYYY-MM-DD HH:mm:ss", "Asia/Dubai");
@@ -291,10 +289,9 @@ export const chargingDetail = async (req, resp) => {
         }
         const chargeData = await queryDB(`
             SELECT energy, power, charger_max_speed
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ?
-            ORDER BY id DESC
-            LIMIT 1 `, [ chargingData.charger_id] 
+            LIMIT 1 `, [ chargingData.charger_id]
         );
         const currentReading  = chargeData?.energy || 0;
 

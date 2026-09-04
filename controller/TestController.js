@@ -545,10 +545,9 @@ export const scanChargePlugCheckCron = async () => {
                 b.start_kwh,
                 b.start_time,
                 (
-                    SELECT scd.energy
-                    FROM scan_charger_data scd
-                    WHERE scd.charger_id = b.charger_id
-                    ORDER BY scd.id DESC
+                    SELECT cc.energy
+                    FROM community_chargers cc
+                    WHERE cc.charger_id = b.charger_id
                     LIMIT 1
                 ) AS current_energy
             FROM scan_charger_booking b

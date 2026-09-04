@@ -991,10 +991,9 @@ const scanChargingDetail = async (rider_id) => {
         
         const chargeData = await queryDB(`
             SELECT energy, power
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ?
-            ORDER BY id DESC
-            LIMIT 1 `, [ chargingData.charger_id] 
+            LIMIT 1 `, [ chargingData.charger_id]
         );
         const currentReading  = chargeData?.energy || 0;
 

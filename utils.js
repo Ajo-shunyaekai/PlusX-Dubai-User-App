@@ -507,7 +507,8 @@ export const checkCoupon = async (rider_id, booking_type, coupon_code, bookingPr
         data.total_amt = 0;
     }
     return {
-        service_price : Math.floor( parseFloat(data.total_amt) * 100 ),
+        // service_price : Math.floor( parseFloat(data.total_amt) * 100 ),
+        service_price : Math.round( parseFloat(data.total_amt) * 100 ),
         dis_price     : data.dis_price,
         vat_amt       : data.vat_amt,
         amount, 

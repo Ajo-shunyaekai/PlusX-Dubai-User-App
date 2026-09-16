@@ -12,6 +12,14 @@ dotenv.config();
 import { tryCatchErrorHandler } from "../../middleware/errorHandler.js";
 import { removeAllCards } from '../PaymentController.js';
 
+// Link admin-created charger installation inquiries to rider when mobile_no matches rider_mobile
+const linkChargerInstallationInquiryToRider = async (riderId, riderMobile) => {
+    await db.execute(
+        `UPDATE charger_installation_inquiry SET rider_id = ? WHERE mobile_no = ? AND rider_id IS NULL`,
+        [riderId, riderMobile]
+    );
+};
+
 // Link admin offline RSA bookings, invoices, and order history to rider when mobile_no matches rider_mobile
 const linkOfflineRsaToRider = async (riderId, riderMobile) => {
     await db.execute(
@@ -125,6 +133,12 @@ export const register = asyncHandler(async (req, resp) => {
 
     // Link admin-created offline RSA bookings to this rider when mobile_no matches rider_mobile
     await linkOfflineRsaToRider(riderId, rider_mobile);
+    // Link admin-created charger installation inquiries (fail-soft: never block registration)
+    try {
+        await linkChargerInstallationInquiryToRider(riderId, rider_mobile);
+    } catch (linkErr) {
+        console.error('[register] charger installation inquiry link skipped:', linkErr.message);
+    }
 
     delOTP(fullMobile);
 

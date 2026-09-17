@@ -43,8 +43,12 @@ const linkOfflineRsaToRider = async (riderId, riderMobile) => {
 };
 
 /* Rider Auth */
+const resolveAppPlatform = (added_from = '') => {
+    return added_from === 'iOS' ? 'iOS' : 'Android';
+};
+
 export const login = asyncHandler(async (req, resp) => {
-    const { mobile, password ,fcm_token , country_code } = mergeParam(req);
+    const { mobile, password ,fcm_token , country_code, added_from = '' } = mergeParam(req);
 
     const { isValid, errors } = validateFields(mergeParam(req), {
         mobile: ["required"], password: ["required"], fcm_token: ["required"], country_code: ["required"],
@@ -66,7 +70,17 @@ export const login = asyncHandler(async (req, resp) => {
     if (rider.status == 2) return resp.json({ status:0, code:405, error:true, message: ["You can not login as your status is inactive. Kindly contact to customer care"] });
     
     const token    = crypto.randomBytes(12).toString('hex');
-    const [update] = await db.execute(`UPDATE riders SET access_token = ?, status = ?, fcm_token = ? WHERE rider_mobile = ?`, [token, 1, fcm_token, mobile]);
+    const platform = resolveAppPlatform(added_from);
+    const [update] = await db.execute(
+        `UPDATE riders
+         SET access_token = ?, status = ?, fcm_token = ?,
+             added_from = CASE
+                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl') THEN ?
+                 ELSE added_from
+             END
+         WHERE rider_mobile = ?`,
+        [token, 1, fcm_token, platform, mobile]
+    );
 
     if(update.affectedRows > 0){
         const result = {
@@ -254,7 +268,7 @@ export const createOTP = asyncHandler(async (req, resp) => {
 });
 
 export const verifyOTP = asyncHandler(async (req, resp) => {
-    const { mobile, country_code, fcm_token, otp, device_name ='' } = mergeParam(req);
+    const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
     
     const { isValid, errors } = validateFields(mergeParam(req), { 
         mobile       : ["required"], 
@@ -299,8 +313,18 @@ export const verifyOTP = asyncHandler(async (req, resp) => {
     
     if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
 
-    const token  = crypto.randomBytes(12).toString('hex');
-    await updateRecord('riders', { access_token: token, status : 1, fcm_token, device_name }, ['rider_mobile', 'country_code'], [mobile, country_code]);
+    const token    = crypto.randomBytes(12).toString('hex');
+    const platform = resolveAppPlatform(added_from);
+    await db.execute(
+        `UPDATE riders
+         SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
+             added_from = CASE
+                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl') THEN ?
+                 ELSE added_from
+             END
+         WHERE rider_mobile = ? AND country_code = ?`,
+        [token, fcm_token, device_name, platform, mobile, country_code]
+    );
 
     delOTP(fullMobile);
     let respResult = {

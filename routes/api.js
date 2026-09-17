@@ -245,7 +245,7 @@ authzAndAuthRoutes.forEach(({ method, path, handler }) => {
         middlewares.push(handleFileUpload(rule.folder, rule.fields, rule.maxCount));
     } 
     middlewares.push(apiAuthorization);
-    // middlewares.push(apiAuthentication);
+    middlewares.push(apiAuthentication);
     router[method](path, ...middlewares, handler);
 });
 router.post('/validate-coupon', redeemCoupon);

@@ -208,6 +208,7 @@ export const regsCreateOTP = asyncHandler(async (req, resp) => {
 
     const otp = generateOTP(4);
     storeOTP(fullMobile, otp);
+    // return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //for testing server 
 
     sendOtp( fullMobile,
         `Your One-Time Password (OTP) for sign-up is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
@@ -245,6 +246,7 @@ export const createOTP = asyncHandler(async (req, resp) => {
         otp          = ( mobile == 509508509 || mobile == '509508509') ? "2207" : otp;
 
     storeOTP(fullMobile, otp);
+    // return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //this is for testing server
 
     if( mobile == 508509508 || mobile == '508509508') {
         return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });

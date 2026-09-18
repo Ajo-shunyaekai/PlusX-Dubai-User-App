@@ -160,29 +160,35 @@ export const roadAssistanceList = asyncHandler(async (req, resp) => {
     `;
     const [bookingList] = await db.execute(bookingsQuery, [rider_id, ...statusParams]);
 
-    // Fetch admin-created offline RSA bookings linked to this rider (rider_id set on register)
-    const offlineTotalQuery = `SELECT COUNT(*) AS total FROM rsa_offline_booking WHERE rider_id = ? AND ${statusCondition}`;
-    const [offlineTotalRows] = await db.execute(offlineTotalQuery, [rider_id, ...statusParams]);
-    const offlineTotal = offlineTotalRows[0].total;
+    // Offline RSA: only completed bookings (RO/PU/CC), and only on Completed tab
+    let offlineTotal = 0;
+    let offlineBookingList = [];
+    if (bookingStatus === 'CM') {
+        const offlineStatusCondition = `order_status IN (?, ?, ?)`;
+        const offlineStatusParams = ['RO', 'PU', 'CC'];
 
-    // Map offline booking fields to the same list shape as online road_assistance rows
-    const offlineBookingsQuery = `
-        SELECT 
-            request_id,
-            booking_price AS price,
-            customer_name AS name,
-            '' AS country_code,
-            mobile_no AS contact_no,
-            order_status,
-            ${formatDateTimeInQuery(['created_at'])},
-            address AS pickup_address,
-            1 AS is_offline
-        FROM 
-            rsa_offline_booking 
-        WHERE 
-            rider_id = ? AND ${statusCondition} ${orderBy}
-    `;
-    const [offlineBookingList] = await db.execute(offlineBookingsQuery, [rider_id, ...statusParams]);
+        const offlineTotalQuery = `SELECT COUNT(*) AS total FROM rsa_offline_booking WHERE rider_id = ? AND ${offlineStatusCondition}`;
+        const [offlineTotalRows] = await db.execute(offlineTotalQuery, [rider_id, ...offlineStatusParams]);
+        offlineTotal = offlineTotalRows[0].total;
+
+        const offlineBookingsQuery = `
+            SELECT 
+                request_id,
+                booking_price AS price,
+                customer_name AS name,
+                '' AS country_code,
+                mobile_no AS contact_no,
+                order_status,
+                ${formatDateTimeInQuery(['created_at'])},
+                address AS pickup_address,
+                1 AS is_offline
+            FROM 
+                rsa_offline_booking 
+            WHERE 
+                rider_id = ? AND ${offlineStatusCondition} ${orderBy}
+        `;
+        [offlineBookingList] = await db.execute(offlineBookingsQuery, [rider_id, ...offlineStatusParams]);
+    }
 
     // Merge online + offline bookings, sort by date, then paginate
     const mergedBookingList = [...bookingList, ...offlineBookingList]
@@ -205,27 +211,7 @@ export const roadAssistanceList = asyncHandler(async (req, resp) => {
         const inProcessParams = ['CNF', 'C', 'PU', 'RO', 'PNR', 'CC'];
         const [inProcessrow]  = await db.execute(inProcessQuery, [rider_id, ...inProcessParams]);
 
-        // Include in-process offline bookings on the Scheduled tab (same exclusion rule as online)
-        const offlineInProcessQuery = `
-            SELECT 
-                request_id,
-                booking_price AS price,
-                customer_name AS name,
-                '' AS country_code,
-                mobile_no AS contact_no,
-                order_status,
-                ${formatDateTimeInQuery(['created_at'])},
-                address AS pickup_address,
-                1 AS is_offline
-            FROM 
-                rsa_offline_booking 
-            WHERE 
-                rider_id = ? AND order_status NOT IN (?, ?, ?, ?, ?, ?) ${orderBy}
-        `;
-        const [offlineInProcessRows] = await db.execute(offlineInProcessQuery, [rider_id, ...inProcessParams]);
-
-        inProcessBookingList = [...inProcessrow, ...offlineInProcessRows]
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        inProcessBookingList = inProcessrow
             .slice(parseInt(start), parseInt(start) + limit);
     }
     // Return merged online + offline list with combined pagination totals

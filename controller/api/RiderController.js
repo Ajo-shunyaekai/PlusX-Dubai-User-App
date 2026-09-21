@@ -48,7 +48,7 @@ const resolveAppPlatform = (added_from = '') => {
 };
 
 export const login = asyncHandler(async (req, resp) => {
-    const { mobile, password ,fcm_token , country_code, added_from = '' } = mergeParam(req);
+    const { mobile, password ,fcm_token , country_code } = mergeParam(req);
 
     const { isValid, errors } = validateFields(mergeParam(req), {
         mobile: ["required"], password: ["required"], fcm_token: ["required"], country_code: ["required"],
@@ -70,17 +70,7 @@ export const login = asyncHandler(async (req, resp) => {
     if (rider.status == 2) return resp.json({ status:0, code:405, error:true, message: ["You can not login as your status is inactive. Kindly contact to customer care"] });
     
     const token    = crypto.randomBytes(12).toString('hex');
-    const platform = resolveAppPlatform(added_from);
-    const [update] = await db.execute(
-        `UPDATE riders
-         SET access_token = ?, status = ?, fcm_token = ?,
-             added_from = CASE
-                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl') THEN ?
-                 ELSE added_from
-             END
-         WHERE rider_mobile = ?`,
-        [token, 1, fcm_token, platform, mobile]
-    );
+    const [update] = await db.execute(`UPDATE riders SET access_token = ?, status = ?, fcm_token = ? WHERE rider_mobile = ?`, [token, 1, fcm_token, mobile]);
 
     if(update.affectedRows > 0){
         const result = {

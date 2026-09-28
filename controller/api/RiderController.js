@@ -138,11 +138,11 @@ export const register = asyncHandler(async (req, resp) => {
     // Link admin-created offline RSA bookings to this rider when mobile_no matches rider_mobile
     await linkOfflineRsaToRider(riderId, rider_mobile);
     // Link admin-created charger installation inquiries (fail-soft: never block registration)
-    try {
-        await linkChargerInstallationInquiryToRider(riderId, rider_mobile);
-    } catch (linkErr) {
-        console.error('[register] charger installation inquiry link skipped:', linkErr.message);
-    }
+    // try {
+    //     await linkChargerInstallationInquiryToRider(riderId, rider_mobile);
+    // } catch (linkErr) {
+    //     console.error('[register] charger installation inquiry link skipped:', linkErr.message);
+    // }
 
     delOTP(fullMobile);
 

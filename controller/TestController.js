@@ -130,6 +130,9 @@ const BookingConfirm = async (bookingType, bookingId, paymentIntentId, couponCod
         case 'RSA':
             await rsaBookingConfirm(bookingId, paymentIntentId, couponCode);
             break;
+        case 'SCI':
+            await scanChargerInvoiceConfirm(bookingId, paymentIntentId);
+            break;
         default:
             console.log('Unknown booking type');
     }
@@ -419,6 +422,29 @@ const rsaBookingConfirm = async (request_id, payment_intent_id, couponCode) => {
     } finally {
         // if (conn) conn.release();
         return true;
+    }
+};
+
+const scanChargerInvoiceConfirm = async (invoice_id, payment_intent_id) => {
+    console.log('Webhooks Scan Charge Invoice');
+    try {
+        const checkOrder = await queryDB(`
+            SELECT invoice_id, rider_id
+            FROM scan_charger_invoice
+            WHERE invoice_id = ? AND invoice_status = ?
+            LIMIT 1
+        `, [invoice_id, 0]);
+
+        if (!checkOrder) {
+            return false;
+        }
+        await updateRecord('scan_charger_invoice', { invoice_status : 1, payment_intent_id }, ['invoice_id', 'rider_id'], [invoice_id, checkOrder.rider_id]);
+
+        return true;
+    } catch(err) {
+        console.error("Transaction failed:", err);
+        tryCatchErrorHandler('stripe-SCI-confirm', err, []);
+        return false;
     }
 };
 

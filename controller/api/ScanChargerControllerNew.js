@@ -434,7 +434,7 @@ export const chargingDetail = async (req, resp) => {
  * Overall limits + all completed sessions (no community filter).
  * Params: rider_id, resident_mobile, page_no (optional), limit (optional)
  */
-export const chargingHistory = async (req, resp) => {
+export const chargingHistoryOld = async (req, resp) => {
     try {
         const { rider_id, resident_mobile, page_no = 1, limit = 2 } = mergeParam(req);
 
@@ -487,6 +487,88 @@ export const chargingHistory = async (req, resp) => {
                 used_session    : residentData.used_session,
                 pending_session : pending_session.toFixed(0),
                 session_list    : chargingData,
+                total,
+                totalPage,
+            },
+        });
+    } catch (error) {
+        console.log('Something went wrong in chargingHistory', error);
+        tryCatchErrorHandler(req.originalUrl, error, resp);
+    }
+};
+
+
+export const chargingHistory = async (req, resp) => {
+    try {
+        const { rider_id, resident_mobile, page_no = 1, limit = 2 } = mergeParam(req);
+ 
+        const { isValid, errors } = validateFields(mergeParam(req), {
+            rider_id: ["required"],
+            resident_mobile: ["required"],
+        });
+        if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+ 
+        const { startDate, endDate } = getMonthRange();
+        const offset = (page_no - 1) * limit;
+ 
+        const residentData = await queryDB(`
+            SELECT
+                cr.monthly_session_allocation,
+                ( SELECT COUNT(*) FROM scan_charger_booking
+                  WHERE rider_id = ? AND created_at BETWEEN ? AND ? AND status <> 'F'
+                ) AS used_session
+            FROM community_resident cr
+            WHERE cr.resident_mobile = ?
+            LIMIT 1`, [rider_id, startDate, endDate, resident_mobile]
+        );
+ 
+        if (!residentData) {
+            return resp.json({ message: ["No Resident found."], status: 0, code: 422, error: true });
+        }
+ 
+        const [chargingData] = await db.execute(`
+            SELECT SQL_CALC_FOUND_ROWS
+                booking_id,
+                ${formatDateTimeInQuery(['created_at'])},
+                total_consumption,
+                total_duration
+            FROM scan_charger_booking
+            WHERE rider_id = ? AND status = ?
+            ORDER BY id DESC
+            LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id, "C"]
+        );
+ 
+        const [[{ total }]] = await db.query('SELECT FOUND_ROWS() AS total');
+        const totalPage = Math.max(Math.ceil(total / limit), 1);
+        const pending_session = Math.max(residentData.monthly_session_allocation - residentData.used_session, 0);
+ 
+        const [invoiceData] = await db.execute(`
+            SELECT SQL_CALC_FOUND_ROWS
+                sci.invoice_id,
+                sci.invoice_status,
+                sci.no_of_session,
+                sci.total_consumption,
+                sci.total_amount,
+                sci.community_name,
+                sci.area_name,
+                ${formatDateTimeInQuery(['sci.created_at'])}
+            FROM scan_charger_invoice sci
+            WHERE sci.rider_id = ?
+            ORDER BY sci.id DESC
+            LIMIT ${Number(limit)} OFFSET ${Number(offset)}`, [rider_id]
+        );
+ 
+        return resp.json({
+            status: 1,
+            code: 200,
+            message: ["Charging Data"],
+            data: {
+                // 1 if invoice exists, otherwise 0
+                isInvoiceCreated: invoiceData.length > 0 ? 1 : 0,
+                total_session: residentData.monthly_session_allocation,
+                used_session: residentData.used_session,
+                pending_session: pending_session.toFixed(0),
+                session_list: chargingData,
                 total,
                 totalPage,
             },

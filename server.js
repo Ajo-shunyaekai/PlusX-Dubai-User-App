@@ -130,4 +130,4 @@ client.on('error', err => console.log('Error', err.message));
 
 export default client;
 
-// Live Update - 03-09-2026   - https://docs.google.com/document/d/1izxmqh8j1eJunbgTe2W-Y1MjPj-3ySd-RnZSqV1WVPE/edit?tab=t.0#heading=h.yhadm92d8hpp
+// Live Update - 01-10-2026   - https://docs.google.com/document/d/13Ov1GvFNSeP9TpKZuxk6NojZr-q2N2IYsg3H1y-IC6I/edit?tab=t.0

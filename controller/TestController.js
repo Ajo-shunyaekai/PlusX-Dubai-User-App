@@ -145,7 +145,7 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
     try { 
         const checkOrder = await queryDB(`
             SELECT pcb.rider_id, pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude,
-            pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent
+            pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent, pcb.package_data
             FROM 
                 portable_charger_booking as pcb
             LEFT JOIN
@@ -187,6 +187,13 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
             const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
+            const packageData      = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
+            const chargingFee      = parseFloat(packageData?.price || 0);
+            const chargingFeeVat   = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
+            const packageHtml      = packageData ? `<p>Package Details:</p>
+                    <p>Package Name : ${packageData.package_name}</p>
+                    <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+                    <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
             const htmlUser = `<html>
                 <body>
                     <h4>Dear ${checkOrder.user_name},</h4>
@@ -194,6 +201,7 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                     <p>Booking Details:</p>
                     <p>Booking ID: ${booking_id}</p>
                     <p>Date and Time of Service: ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p>
                     <p>We look forward to serving you and providing a seamless EV charging experience.</p>
                     <p> Best regards,<br/>PlusX Electric Team </p>
@@ -210,13 +218,14 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                     <p>Address       : ${checkOrder.address}</p>            
                     <p>Service Date & Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>       
                     <p>Vechile Details : ${checkOrder.vehicle_data}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p> 
                     <a href="https://www.google.com/maps?q=${checkOrder.latitude},${checkOrder.longitude}">Address Link</a><br>
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
             // emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${booking_id}`, htmlAdmin);
-            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Mobile & Portable EV Charging Service Booking - ${booking_id}`, htmlAdmin);
+            emailQueue.addEmail([process.env.MAIL_POD_ADMIN, process.env.MAIL_CHINTAN_SHUNYA], `Mobile & Portable EV Charging Service Booking - ${booking_id}`, htmlAdmin);
             
             io.emit('notification-list', {msCount : 1});
             

@@ -799,7 +799,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     const checkOrder = await queryDB(`
         SELECT  
             rsa.rsa_name,rsa.email as rsa_email, pcb.rsa_id, pcb.address, pcb.slot_time, pcb.user_name, DATE_FORMAT(pcb.slot_date, '%Y-%m-%d') AS slot_date, pcb.country_code, 
-            pcb.contact_no, riders.rider_email, riders.rider_name, riders.fcm_token, rsa.fcm_token as rsa_fcm_token, pcb.vehicle_data
+            pcb.contact_no, riders.rider_email, riders.rider_name, riders.fcm_token, rsa.fcm_token as rsa_fcm_token, pcb.vehicle_data, pcb.package_data
         FROM  
             portable_charger_booking pcb
         LEFT JOIN  
@@ -841,6 +841,14 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     const message = `Booking Cancelled : ${booking_id}`;
     // await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
     await createNotification(title, message, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+
+    const packageData = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
+    const chargingFee    = parseFloat(packageData?.price || 0);
+    const chargingFeeVat = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
+    const packageHtml    = packageData ? `<p>Package Details:</p>
+            <p>Package Name : ${packageData.package_name}</p>
+            <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+            <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
  
     if(checkOrder.rsa_id ||  checkOrder.rsa_id!=null) {
         await db.execute(`DELETE FROM portable_charger_booking_assign WHERE order_id=? AND rider_id=?`, [booking_id, rider_id]);
@@ -855,6 +863,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
                 <p>Address             : ${checkOrder.address}</p>
                 <p>Service Date & Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}  </p> 
                 <p>Vehicle Details     : ${checkOrder.vehicle_data}</p>
+                ${packageHtml}
                 <p>Thank you for your attention to this update.</p>
                 <p>Best regards,<br/>PlusX Electric Team </p>
             </body>
@@ -868,6 +877,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
             <p>We would like to inform you that your booking for the mobile & portable EV charging service has been successfully cancelled. Below are the details of your cancelled booking:</p>
             <p>Booking ID    : ${booking_id}</p>
             <p>Date and Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
+            ${packageHtml}
             <p>Thank you for using PlusX Electric. We look forward to serving you again soon.</p>
             <p>Best regards,<br/>PlusX Electric Team </p>
         </body>
@@ -883,6 +893,7 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
             <p>Address             : ${checkOrder.address}</p>
             <p>Service Date & Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}  </p> 
             <p>Vehicle Details     : ${checkOrder.vehicle_data}</p>
+            ${packageHtml}
             <p>Thank you for your attention to this update.</p>
             <p>Best regards,<br/>PlusX Electric Team </p>
         </body>
@@ -1009,7 +1020,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
             SELECT
                 pcb.user_name, pcb.country_code, pcb.contact_no, pcb.address, pcb.latitude, pcb.longitude,
                 pcb.rescheduled_booking, pcb.slot_date, pcb.slot_time, rd.fcm_token, rd.rider_email, 
-                pcb.vehicle_data, rsa.rsa_name, rsa.fcm_token as rsa_fcm_token, rsa.email as rsa_email, pcb.rsa_id
+                pcb.vehicle_data, rsa.rsa_name, rsa.fcm_token as rsa_fcm_token, rsa.email as rsa_email, pcb.rsa_id, pcb.package_data
             FROM 
                 portable_charger_booking as pcb
             LEFT JOIN
@@ -1063,6 +1074,14 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
         createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
         createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
         pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
+
+        const packageData    = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
+        const chargingFee    = parseFloat(packageData?.price || 0);
+        const chargingFeeVat = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
+        const packageHtml    = packageData ? `<p>Package Details:</p>
+                <p>Package Name : ${packageData.package_name}</p>
+                <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+                <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
     
         const htmlUser = `<html>
             <body>
@@ -1071,6 +1090,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
                 
                 <p>Booking ID: ${booking_id}</p>
                 <p>Rescheduled Date & Time : ${moment(fSlotDate, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(slot_time, 'HH:mm').format('h:mm A')}</p>
+                ${packageHtml}
 
                 <p>Thank you for choosing PlusX Electric. If you have any questions or need further assistance, feel free to contact us.</p>                  
                 <p>Best regards,<br/> PlusX Electric Team </p>
@@ -1087,6 +1107,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
                 <p>New Scheduled Date & Time : ${moment(fSlotDate, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(slot_time, 'HH:mm').format('h:mm A')}</p>
                 <p>Location        : ${checkOrder.address}</p>       
                 <p>Vechile Details : ${checkOrder.vehicle_data}</p>
+                ${packageHtml}
                 <a href="https://www.google.com/maps?q=${checkOrder.latitude},${checkOrder.longitude}">Address Link</a><br>
                 <p>Best regards,<br/>PlusX Electric Team </p>
             </body>
@@ -1108,6 +1129,7 @@ export const reScheduleBooking = asyncHandler(async (req, resp) => {
                     <p>New Scheduled Date & Time : ${moment(fSlotDate, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(slot_time, 'HH:mm').format('h:mm A')}</p>
                     <p>Location        : ${checkOrder.address}</p>       
                     <p>Vechile Details : ${checkOrder.vehicle_data}</p>
+                    ${packageHtml}
                     <a href="https://www.google.com/maps?q=${checkOrder.latitude},${checkOrder.longitude}">Address Link</a><br>
                     <p>Best regards,<br/> PlusX Electric Team </p>
                 </body>

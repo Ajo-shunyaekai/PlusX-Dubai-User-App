@@ -39,6 +39,7 @@ export const pickAndDropInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND cs.price = "0"
  
+        //this line to be commented for payment testing in testing server
         if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
             return resp.json({ 
                 message : [`We have received your booking. Our team will get in touch with you soon!`], 
@@ -117,7 +118,7 @@ export const pickAndDropInvoice = asyncHandler(async (req, resp) => {
     } catch(err) {
         // await rollbackTransaction(conn);
         console.error("Transaction failed:", err);
-        tryCatchErrorHandler(err, resp);
+        tryCatchErrorHandler(req.originalUrl, err, resp);
         
     } finally {
         // if (conn) conn.release();
@@ -135,7 +136,7 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
     try { 
         const checkOrder = await queryDB(`
             SELECT 
-                pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude, pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.service_price, pcb.current_percent
+                pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude, pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.service_price, pcb.current_percent, pcb.package_data
             FROM 
                 portable_charger_booking as pcb
             LEFT JOIN
@@ -145,8 +146,9 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]);  //AND pcb.service_price = "0"
 
+        //this line to be commented for payment testing in testing server
         if (!checkOrder || parseFloat( checkOrder.service_price) > 0 ) {
-            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            let respMsg = "Booking Request Received! Thank you for booking our mobile & portable EV charging service for your EV. Our team will arrive at the scheduled time."; 
             return resp.json({ message : [respMsg], status: 1, code : 200 });
         }
         const ordHistoryCount = await queryDB(
@@ -175,46 +177,60 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
             await updateRecord('portable_charger_booking', { status : 'CNF', payment_intent_id: paymentIntentId}, ['booking_id', 'rider_id'], [request_id, rider_id] );  //, conn
 
             const href    = 'portable_charger_booking/' + request_id;
-            const heading = 'Portable Charging Booking!';
+            // const heading = 'Portable Charging Booking!';
+            const heading = 'Mobile & Portable EV Charging Service Booking!';
             const desc    = `Booking Confirmed! ${request_id}`;
-            createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
-            createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', rider_id, href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  rider_id, '', href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', rider_id, href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
-            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 5%' : '0%' ;
+            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
+            const packageData      = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
+            const chargingFee      = parseFloat(packageData?.price || 0);
+            const chargingFeeVat   = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
+            const packageHtml      = packageData ? `<p>Package Details:</p>
+                    <p>Package Name : ${packageData.package_name}</p>
+                    <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+                    <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
             const htmlUser = `<html>
                 <body>
                     <h4>Dear ${checkOrder.user_name},</h4>
-                    <p>Thank you for choosing our portable charger service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
+                    <p>Thank you for choosing our mobile & portable EV charging service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
                     <p>Booking Details:</p>
                     <p>Booking ID: ${request_id}</p>
                     <p>Date and Time of Service: ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p>
                     <p>We look forward to serving you and providing a seamless EV charging experience.</p>
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Portable EV Charger', htmlUser);
+            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Mobile & Portable EV Charging Service', htmlUser);
 
             const htmlAdmin = `<html>
                 <body>
                     <h4>Dear Admin,</h4>
-                    <p>We have received a new booking for our Portable Charger service. Please find the details below:</p> 
+                    <p>We have received a new booking for our mobile & portable EV charging service. Please find the details below:</p> 
                     <p>Customer Name       : ${checkOrder.user_name}</p>
                     <p>Contact No.         : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
                     <p>Address             : ${checkOrder.address}</p>            
                     <p>Service Date & Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>       
                     <p>Vechile Details : ${checkOrder.vehicle_data}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p>
                     <a href="https://www.google.com/maps?q=${checkOrder.latitude},${checkOrder.longitude}">Address Link</a><br>
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${request_id}`, htmlAdmin);
+            // emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${request_id}`, htmlAdmin);
+            emailQueue.addEmail([process.env.MAIL_POD_ADMIN, process.env.MAIL_CHINTAN_SHUNYA], `Mobile & Portable EV Charging Service Booking - ${request_id}`, htmlAdmin);
             
             io.emit('notification-list', {msCount : 1});
             // await commitTransaction(conn);
-            let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            // let respMsg = "Booking Request Received! Thank you for booking our portable charger service for your EV. Our team will arrive at the scheduled time."; 
+            let respMsg = "Booking Request Received! Thank you for booking our mobile & portable EV charging service for your EV. Our team will arrive at the scheduled time."; 
             return resp.json({ message: [respMsg], status: 1, code: 200 });
         } else {
             return resp.json({ message: ['Your booking has been already confirmed!'], status: 0, code: 200 });
@@ -223,7 +239,7 @@ export const portableChargerInvoice = asyncHandler(async (req, resp) => {
     } catch(err) {
         // await rollbackTransaction(conn);
         console.error("Transaction failed:", err);
-        tryCatchErrorHandler(err, resp);
+        tryCatchErrorHandler(req.originalUrl, err, resp);
     } finally {
         // if (conn) conn.release();
     }
@@ -252,6 +268,7 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
             LIMIT 1
         `,[request_id, rider_id]); // AND rsa.price = "0"
 
+        //this line to be commented for payment testing in testing server
         if (!checkOrder || parseFloat( checkOrder.price) > 0 ) {
             let respMsg = 'We have received your booking and our team will reach out to you soon.'; 
             return resp.json({ message : [respMsg], status: 1, code : 200 });
@@ -332,9 +349,62 @@ export const rsaInvoice = asyncHandler(async (req, resp) => {
     } catch(err) {
         // await rollbackTransaction(conn);
         console.error("Transaction failed:", err);
-        tryCatchErrorHandler(err, resp);
+        tryCatchErrorHandler(req.originalUrl, err, resp);
     } finally {
         // if (conn) conn.release();
+    }
+});
+
+/**
+ * POST /create-scan-charge-invoice
+ * Body: rider_id (required), invoice_id (required), session_id (required)
+ * Confirms Stripe payment for a pending scan-charge invoice owned by the rider.
+ * Limits are overall per resident — no per-community payment restriction.
+ */
+export const scanChargerInvoiceNew = asyncHandler(async (req, resp) => {
+    const { rider_id, invoice_id, session_id } = mergeParam(req);
+    const { isValid, errors } = validateFields(mergeParam(req), {
+        rider_id   : ["required"],
+        invoice_id : ["required"],
+        session_id : ["required"]
+    });
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    try {
+        const checkOrder = await queryDB(`
+            SELECT invoice_id, invoice_status, community_name, area_name
+            FROM scan_charger_invoice
+            WHERE invoice_id = ? AND rider_id = ? AND invoice_status = ?
+            LIMIT 1
+        `, [invoice_id, rider_id, 0]);
+
+        if (!checkOrder) {
+            return resp.json({
+                message : ["No pending invoice was found. The payment may have already been completed."],
+                status  : 1,
+                code    : 200
+            });
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        const paymentIntentId = session.payment_intent;
+
+        await updateRecord(
+            'scan_charger_invoice',
+            { invoice_status: 1, payment_intent_id: paymentIntentId },
+            ['invoice_id', 'rider_id'],
+            [invoice_id, rider_id]
+        );
+
+        return resp.json({
+            message : ["Your invoice has been paid successfully. Thank you for your payment."],
+            status  : 1,
+            code    : 200,
+            data    : { invoice_id },
+        });
+    } catch (err) {
+        console.error("Transaction failed:", err);
+        tryCatchErrorHandler(req.originalUrl, err, resp);
     }
 });
 
@@ -415,7 +485,7 @@ export const scanChargerInvoice = asyncHandler(async (req, resp) => {
     } catch(err) {
         // await rollbackTransaction(conn);
         console.error("Transaction failed:", err);
-        tryCatchErrorHandler(err, resp);
+        tryCatchErrorHandler(req.originalUrl, err, resp);
     } finally {
         // if (conn) conn.release();
     }

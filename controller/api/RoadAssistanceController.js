@@ -149,7 +149,6 @@ export const roadAssistanceList = asyncHandler(async (req, resp) => {
     const totalQuery  = `SELECT COUNT(*) AS total FROM road_assistance WHERE rider_id = ? AND ${statusCondition}`;
     const [totalRows] = await db.execute(totalQuery, [rider_id, ...statusParams]);
     const total       = totalRows[0].total;
-    const totalPage   = Math.max(Math.ceil(total / limit), 1);
 
     const bookingsQuery = `
         SELECT 
@@ -157,11 +156,47 @@ export const roadAssistanceList = asyncHandler(async (req, resp) => {
         FROM 
             road_assistance 
         WHERE 
-            rider_id = ? AND ${statusCondition} ${orderBy} 
-        LIMIT 
-            ${parseInt(start)}, ${parseInt(limit)}
+            rider_id = ? AND ${statusCondition} ${orderBy}
     `;
     const [bookingList] = await db.execute(bookingsQuery, [rider_id, ...statusParams]);
+
+    // Offline RSA: only completed bookings (RO/PU/CC), and only on Completed tab
+    let offlineTotal = 0;
+    let offlineBookingList = [];
+    if (bookingStatus === 'CM') {
+        const offlineStatusCondition = `order_status IN (?, ?, ?)`;
+        const offlineStatusParams = ['RO', 'PU', 'CC'];
+
+        const offlineTotalQuery = `SELECT COUNT(*) AS total FROM rsa_offline_booking WHERE rider_id = ? AND ${offlineStatusCondition}`;
+        const [offlineTotalRows] = await db.execute(offlineTotalQuery, [rider_id, ...offlineStatusParams]);
+        offlineTotal = offlineTotalRows[0].total;
+
+        const offlineBookingsQuery = `
+            SELECT 
+                request_id,
+                booking_price AS price,
+                customer_name AS name,
+                '' AS country_code,
+                mobile_no AS contact_no,
+                order_status,
+                ${formatDateTimeInQuery(['created_at'])},
+                address AS pickup_address,
+                1 AS is_offline
+            FROM 
+                rsa_offline_booking 
+            WHERE 
+                rider_id = ? AND ${offlineStatusCondition} ${orderBy}
+        `;
+        [offlineBookingList] = await db.execute(offlineBookingsQuery, [rider_id, ...offlineStatusParams]);
+    }
+
+    // Merge online + offline bookings, sort by date, then paginate
+    const mergedBookingList = [...bookingList, ...offlineBookingList]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(parseInt(start), parseInt(start) + limit);
+
+    const mergedTotal     = total + offlineTotal;
+    const mergedTotalPage = Math.max(Math.ceil(mergedTotal / limit), 1);
     
     let inProcessBookingList = [];
     if(bookingStatus === 'S'){
@@ -171,21 +206,22 @@ export const roadAssistanceList = asyncHandler(async (req, resp) => {
             FROM 
                 road_assistance 
             WHERE 
-                rider_id = ? AND order_status NOT IN (?, ?, ?, ?, ?, ?) ${orderBy} 
-            LIMIT 
-                ${parseInt(start)}, ${parseInt(limit)}
+                rider_id = ? AND order_status NOT IN (?, ?, ?, ?, ?, ?) ${orderBy}
         `;
         const inProcessParams = ['CNF', 'C', 'PU', 'RO', 'PNR', 'CC'];
         const [inProcessrow]  = await db.execute(inProcessQuery, [rider_id, ...inProcessParams]);
-        inProcessBookingList  = inProcessrow;
+
+        inProcessBookingList = inProcessrow
+            .slice(parseInt(start), parseInt(start) + limit);
     }
+    // Return merged online + offline list with combined pagination totals
     return resp.json({
         status     : 1,
         code       : 200,
         message    : ["Road Assistance List fetch successfully!"],
-        data       : bookingList,
-        total_page : totalPage,
-        total      : total,
+        data       : mergedBookingList,
+        total_page : mergedTotalPage,
+        total      : mergedTotal,
         inProcessBookingList,
         base_url    : `${process.env.DIR_UPLOADS}road-assistance/`,
         noResultMsg : 'There are no recent bookings. Please schedule your booking now.'
@@ -209,15 +245,55 @@ export const roadAssistanceDetail = asyncHandler(async (req, resp) => {
             rider_id = ? AND request_id = ? 
         LIMIT 1
     `, [rider_id, order_id]);
-    if(!bookingWithNull) return resp.json({ status: 0, code: 404, message: ["There are no booking available for the provided booking ID."] });
+
+    // Fallback to offline booking if not found in road_assistance (admin-created bookings)
+    let isOfflineBooking = false;
+    let bookingRow = bookingWithNull;
+
+    if (!bookingRow) {
+        // Fetch offline booking details; is_offline flag helps the app distinguish booking type
+        const [[offlineBooking]] = await db.execute(`
+            SELECT 
+                request_id,
+                customer_name AS name,
+                '+971' AS country_code,
+                mobile_no AS contact_no,
+                address AS pickup_address,
+                location_link,
+                email_id,
+                order_status,
+                booking_price AS price,
+                booking_price,
+                jump_start_required,
+                battery_level,
+                vehicle_data,
+                battery_level AS current_percent,
+                payment_status,
+                transaction_id,
+                ${formatDateTimeInQuery(['created_at'])},
+                '' AS rsa_data,
+                '' AS vehicle_id,
+                1 AS is_offline
+            FROM 
+                rsa_offline_booking
+            WHERE 
+                rider_id = ? AND request_id = ?
+            LIMIT 1
+        `, [rider_id, order_id]);
+        bookingRow = offlineBooking;
+        isOfflineBooking = !!offlineBooking;
+    }
+
+    if(!bookingRow) return resp.json({ status: 0, code: 404, message: ["There are no booking available for the provided booking ID."] });
     
     const roadAssistance = Object.fromEntries(
-        Object.entries(bookingWithNull).map(([key, value]) => [
+        Object.entries(bookingRow).map(([key, value]) => [
             key,
             value === null ? "" : value
         ])
     );
-    if(roadAssistance.vehicle_data == '' || roadAssistance.vehicle_data == null) {
+    // Vehicle lookup only applies to online bookings (offline stores vehicle_data on the booking row)
+    if(!isOfflineBooking && (roadAssistance.vehicle_data == '' || roadAssistance.vehicle_data == null)) {
         const vehicledata = await queryDB(`
             SELECT                 
                 vehicle_make, vehicle_model, vehicle_specification, emirates, vehicle_code, vehicle_number
@@ -231,15 +307,33 @@ export const roadAssistanceDetail = asyncHandler(async (req, resp) => {
             roadAssistance.vehicle_data = vehicledata.vehicle_make + ", " + vehicledata.vehicle_model+ ", "+ vehicledata.vehicle_specification+ ", "+ vehicledata.emirates+ "-" + vehicledata.vehicle_code + "-"+ vehicledata.vehicle_number ;
         }
     }
-    const [history] = await db.execute(`
-        SELECT 
-            order_status, rsa_id, ${formatDateTimeInQuery(['created_at'])}, 
-            (select rsa.rsa_name from rsa where rsa.rsa_id = order_history.rsa_id) as rsa_name
-        FROM order_history 
-        WHERE order_id = ?
-        ORDER BY id ASC
-    `,[order_id]);
-    const newHistory =  await makeBookingHistory(history);
+    let newHistory = [];
+    if (!isOfflineBooking) {
+        // Online booking status timeline from order_history
+        const [history] = await db.execute(`
+            SELECT 
+                order_status, rsa_id, ${formatDateTimeInQuery(['created_at'])}, 
+                (select rsa.rsa_name from rsa where rsa.rsa_id = order_history.rsa_id) as rsa_name
+            FROM order_history 
+            WHERE order_id = ?
+            ORDER BY id ASC
+        `,[order_id]);
+        newHistory = await makeBookingHistory(history);
+    } else {
+        // Offline booking status timeline from rsa_offline_order_history (driver_name shown as rsa_name)
+        const [history] = await db.execute(`
+            SELECT 
+                order_status,
+                NULL AS rsa_id,
+                ${formatDateTimeInQuery(['created_at'])},
+                driver_name AS rsa_name,
+                remarks
+            FROM rsa_offline_order_history
+            WHERE order_id = ? AND (rider_id = ? OR rider_id IS NULL)
+            ORDER BY id ASC
+        `, [order_id, rider_id]);
+        newHistory = makeOfflineBookingHistory(history, roadAssistance.created_at, roadAssistance.order_status);
+    }
     return resp.json({
         message       : ["Road Assistance Details fetched successfully!"],
         order_data    : roadAssistance,
@@ -306,29 +400,130 @@ export const roadAssistanceInvoiceDetail = asyncHandler(async (req, resp) => {
             rsi.request_id = ? AND rsi.rider_id = ?
     `, [ booking_id, rider_id ]);
 
-    if(!data) return resp.json({ status: 0, code: 404, message: ["There are no invoices available for the provided booking ID."] });
+    // Online invoice from road_assistance_invoice (existing flow)
+    if (data) {
+        data.booking_price = data.price_details.amount ;   
+        data.discount      = data.price_details.discount_prcnt ;   
 
-    data.booking_price = data.price_details.amount ;   
-    data.discount      = data.price_details.discount_prcnt ;   
+        data.kw_consume      = data.price_details.kw_consume ; 
+        data.dewa_unit_price = data.price_details.dewa_unit_price ; 
+        data.cpo_unit_price  = data.price_details.cpo_unit_price ; 
 
-    data.kw_consume      = data.price_details.kw_consume ; 
-    data.dewa_unit_price = data.price_details.dewa_unit_price ; 
-    data.cpo_unit_price  = data.price_details.cpo_unit_price ; 
+        data.kw_dewa_amt    = data.price_details.kw_dewa_amt ; 
+        data.kw_cpo_amt     = data.price_details.kw_cpo_amt ; 
+        data.delivry_charge = data.price_details.delivry_charge ; 
 
-    data.kw_dewa_amt    = data.price_details.kw_dewa_amt ; 
-    data.kw_cpo_amt     = data.price_details.kw_cpo_amt ; 
-    data.delivry_charge = data.price_details.delivry_charge ; 
+        data.vat_amount   = data.price_details.vat_amount ; 
+        data.discount_amt = data.price_details.discount_amt ; 
+        data.price        = Math.round(data.price_details.total_price) ; 
+        
+        data.vat_percetange = '5%';
+        data.price_details = {};
 
-    data.vat_amount   = data.price_details.vat_amount ; 
-    data.discount_amt = data.price_details.discount_amt ; 
-    data.price        = Math.round(data.price_details.total_price) ; 
-    
-    data.vat_percetange = '5%';
+        return resp.json({
+            message        : ["Road Assistance Invoice Details fetch successfully!"],
+            data           : data,
+            vat_percetange : '5%',
+            status         : 1,
+            code           : 200,
+        });
+    }
 
-    data.price_details = {};
+    // Fallback: offline invoice from rsa_offline_invoice joined with rsa_offline_booking
+    // booking_id = request_id from offline booking; rider matched via rider_id or mobile_no
+    let offlineData = await queryDB(`
+        SELECT 
+            roi.request_id AS booking_id,
+            roi.invoice_id,
+            roi.invoice_date,
+            roi.amount,
+            roi.payment_status,
+            roi.transaction_id,
+            rob.customer_name AS user_name,
+            '+971' AS country_code,
+            rob.mobile_no AS contact_no,
+            rob.address,
+            rob.booking_price,
+            rob.price AS service_price,
+            rob.vehicle_data,
+            rob.email_id,
+            rob.jump_start_required,
+            rob.battery_level,
+            'aed' AS currency
+        FROM 
+            rsa_offline_invoice AS roi
+        INNER JOIN
+            rsa_offline_booking AS rob ON rob.request_id = roi.request_id
+        WHERE 
+            roi.request_id = ?
+            AND (
+                rob.rider_id = ?
+                OR roi.rider_id = ?
+                OR rob.mobile_no = (SELECT rider_mobile FROM riders WHERE rider_id = ? LIMIT 1)
+            )
+        LIMIT 1
+    `, [ booking_id, rider_id, rider_id, rider_id ]);
+
+    // If invoice row not created yet, fallback to offline booking payment fields
+    if (!offlineData) {
+        offlineData = await queryDB(`
+            SELECT 
+                request_id AS booking_id,
+                '' AS invoice_id,
+                DATE_FORMAT(CONVERT_TZ(created_at, 'UTC', 'Asia/Dubai'), '%Y-%m-%d %H:%i:%s') AS invoice_date,
+                booking_price AS amount,
+                payment_status,
+                transaction_id,
+                customer_name AS user_name,
+                '+971' AS country_code,
+                mobile_no AS contact_no,
+                address,
+                booking_price,
+                price AS service_price,
+                vehicle_data,
+                email_id,
+                jump_start_required,
+                battery_level,
+                'aed' AS currency
+            FROM 
+                rsa_offline_booking
+            WHERE 
+                request_id = ?
+                AND (
+                    rider_id = ?
+                    OR mobile_no = (SELECT rider_mobile FROM riders WHERE rider_id = ? LIMIT 1)
+                )
+            LIMIT 1
+        `, [ booking_id, rider_id, rider_id ]);
+    }
+
+    if (!offlineData) {
+        return resp.json({ status: 0, code: 404, message: ["There are no invoices available for the provided booking ID."] });
+    }
+
+    const bookingPrice = parseFloat(offlineData.booking_price) || 0;
+    const totalPrice   = Math.round(parseFloat(offlineData.amount) || 0);
+    const vatAmount    = Math.max(totalPrice - bookingPrice, 0);
+
+    // Map offline invoice to the same response shape as online (kWh fields not applicable for offline)
+    offlineData.discount         = 0;
+    offlineData.kw_consume       = 0;
+    offlineData.dewa_unit_price  = 0;
+    offlineData.cpo_unit_price   = 0;
+    offlineData.kw_dewa_amt      = 0;
+    offlineData.kw_cpo_amt       = 0;
+    offlineData.delivry_charge   = 0;
+    offlineData.discount_amt     = 0;
+    offlineData.vat_amount       = vatAmount;
+    offlineData.price            = totalPrice;
+    offlineData.vat_percetange   = '5%';
+    offlineData.is_offline       = 1;
+    offlineData.country_code     = '+971';
+    offlineData.currency         = 'aed'; // match online road_assistance_invoice currency for AED display in app
+
     return resp.json({
         message        : ["Road Assistance Invoice Details fetch successfully!"],
-        data           : data,
+        data           : offlineData,
         vat_percetange : '5%',
         status         : 1,
         code           : 200,
@@ -395,6 +590,44 @@ export const userFeedbacRSABooking = asyncHandler(async (req, resp) => {
         return resp.json({ message: ['Feedback already submitted!'], status: 0, code: 200 });
     }
 });
+
+// Offline RSA: only Booking Confirmed (CNF) and Booking Completed (CC) in order timeline
+const makeOfflineBookingHistory = (history, createdAt, orderStatus) => {
+    const steps = [
+        { order_status: "CNF", rsa_id: null, created_at: null, rsa_name: null, status: 0 },
+        { order_status: "CC",  rsa_id: null, created_at: null, rsa_name: null, status: 0 },
+    ];
+    const completedStatuses = ['CC', 'RO', 'PU'];
+
+    for (const item of steps) {
+        const matched = history.find(h => h.order_status === item.order_status);
+        if (matched) {
+            item.created_at = matched.created_at;
+            item.rsa_id     = matched.rsa_id;
+            item.rsa_name   = matched.rsa_name;
+            item.status     = 1;
+        }
+    }
+
+    // Mark confirmed from booking created_at when no CNF history row exists
+    if (steps[0].status === 0 && createdAt) {
+        steps[0].created_at = createdAt;
+        steps[0].status     = 1;
+    }
+
+    // Mark completed when booking is finished or CC exists in offline history
+    if (completedStatuses.includes(orderStatus)) {
+        const completedRow = history.find(h => h.order_status === 'CC')
+            || history.find(h => completedStatuses.includes(h.order_status));
+        if (steps[1].status === 0) {
+            steps[1].created_at = completedRow?.created_at || createdAt;
+            steps[1].rsa_name   = completedRow?.rsa_name || null;
+            steps[1].status     = 1;
+        }
+    }
+
+    return steps;
+};
 
 const makeBookingHistory = async (history) => {
     

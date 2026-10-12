@@ -13,7 +13,9 @@ import { stationList, stationDetail, nearestChargerList } from '../controller/ap
 
 import { serviceRequest, requestList, requestDetails, evChargerList, accessoriesList, evchargerDetails, purchaseHistoryList, purchaseHistoryDetails  } from '../controller/api/ChargingInstallationServiceController.js';
 
-import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoice } from '../controller/InvoiceController.js';
+import { rsaInvoice, pickAndDropInvoice, portableChargerInvoice, scanChargerInvoiceNew } from '../controller/InvoiceController.js';
+// Legacy scan invoice (no map-table awareness)
+// import { scanChargerInvoice } from '../controller/InvoiceController.js';
 
 import { addInsurance, insuranceList, insuranceDetails } from '../controller/api/EvInsuranceController.js';
 
@@ -23,7 +25,7 @@ import { addRoadAssistance, roadAssistanceList, roadAssistanceDetail, roadAssist
 
 import {vehicleList, vehicleDetail, areaList, vehicleModelList, vehicleBrandList, dubaiAreaList } from '../controller/api/VehicleController.js';
 
-import { chargerList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
+import { chargerList, packageList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
 
 import { getChargingServiceSlotList, requestService, listServices, getServiceOrderDetail, getInvoiceDetail, cancelValetBooking, userFeedbackValetBooking, rescheduleService, getChargingServiceDateList
 } from '../controller/api/ChargingServiceController.js';
@@ -32,11 +34,20 @@ import { getPaymentdetails, getPaymentSessionData } from '../controller/TestCont
 import { responseContent, countryList } from '../controller/api/ContentController.js';
 
 import { outputAndConnector, addChargShare, editChargShare, chargeShareList, chargeShareDetail, chargeShareDelete, chargeshareForMap } from '../controller/api/ChargeShareController.js'; 
+//import { makeBookingHistoryPOD, makeBookingHistoryRSA, makeBookingHistoryValet } from '../controller/InvoiceUpdateController.js'; 
 
-import { bulkEmailSend } from '../controller/InvoiceUpdateController.js'; 
-// makeBookingHistoryPOD, makeBookingHistoryRSA, makeBookingHistoryValet,
+// Legacy scan-charge (single community_resident.community_id join) — replaced by ScanChargerControllerNew.js
+// import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js';
 
-import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js'; 
+import {
+    residentCommunities,
+    chargingStart,
+    stopCharge,
+    chargingDetail,
+    chargingHistory,
+    scanChargeInvoices,
+    scanChargeInvoiceDetail,
+} from '../controller/api/ScanChargerControllerNew.js';
  
 import rateLimit from 'express-rate-limit';
 
@@ -76,6 +87,7 @@ const authzRoutes = [
     { method: 'get',  path: '/response-content',           handler: responseContent },
     { method: 'get',  path: '/output-power-and-connector-list', handler: outputAndConnector },
 
+    
 ];
 authzRoutes.forEach(({ method, path, handler }) => {
     const middlewares = [apiAuthorization];
@@ -144,6 +156,7 @@ const authzAndAuthRoutes = [
 
     /* Portable charger */
     { method: 'get',  path: '/portable-charger-list',            handler: chargerList },
+    { method: 'get',  path: '/charging-package-list',    handler: packageList },
     { method: 'post', path: '/portable-charger-booking',         handler: chargerBooking },
     { method: 'get',  path: '/portable-charger-booking-list',    handler: chargerBookingList },
     { method: 'get',  path: '/portable-charger-booking-detail',  handler: chargerBookingDetail },
@@ -176,11 +189,11 @@ const authzAndAuthRoutes = [
     { method: 'post', path: '/get-payment-session-data',             handler: getPaymentSessionData },
     { method: 'post', path: '/get-payment-data',                     handler: getPaymentdetails },
 
-    /* Invoice */ 
+    /* Invoice */
     { method: 'post', path: '/create-rsa-invoice',                  handler: rsaInvoice },
     { method: 'post', path: '/create-pick-drop-invoice',            handler: pickAndDropInvoice },
     { method: 'post', path: '/create-portable-charger-invoice',     handler: portableChargerInvoice },
-    { method: 'post', path: '/create-scan-charge-invoice',          handler: scanChargerInvoice },
+    { method: 'post', path: '/create-scan-charge-invoice',          handler: scanChargerInvoiceNew },
 
     // EV Charger
     { method: 'get',  path: '/ev-charger-list',    handler: evChargerList },
@@ -199,13 +212,22 @@ const authzAndAuthRoutes = [
     { method: 'post',  path: '/charge-share-edit',    handler: editChargShare },
     { method: 'post',  path: '/charge-share-delete',  handler: chargeShareDelete },
 
-    // Scan Charge
-    { method: 'post',  path: '/start-scan-charge',          handler: chargingStart },
-    { method: 'post',  path: '/stop-scan-charge',           handler: stopCharge },
-    { method: 'get',   path: '/scan-charge-detail',         handler: chargingDetail },
-    { method: 'get',   path: '/scan-charge-history',        handler: chargingHistory },
-    { method: 'get',   path: '/scan-charge-invoice-list',   handler: scanChargeInvoices },
-    { method: 'get',   path: '/scan-charge-invoice-detail', handler: scanChargeInvoiceDetail },
+    // Scan Charge — multi-community access via community_resident_map; overall limits on community_resident
+    { method: 'get',   path: '/resident-communities',         handler: residentCommunities },
+    { method: 'post',  path: '/start-scan-charge',            handler: chargingStart },
+    { method: 'post',  path: '/stop-scan-charge',             handler: stopCharge },
+    { method: 'get',   path: '/scan-charge-detail',           handler: chargingDetail },
+    { method: 'get',   path: '/scan-charge-history',          handler: chargingHistory },
+    { method: 'get',   path: '/scan-charge-invoice-list',     handler: scanChargeInvoices },
+    { method: 'get',   path: '/scan-charge-invoice-detail',   handler: scanChargeInvoiceDetail },
+
+    // Legacy duplicate -new routes (same handlers as above; kept commented for reference)
+    // { method: 'post',  path: '/start-scan-charge-new',             handler: chargingStart },
+    // { method: 'post',  path: '/stop-scan-charge-new',              handler: stopCharge },
+    // { method: 'get',   path: '/scan-charge-detail-new',            handler: chargingDetail },
+    // { method: 'get',   path: '/scan-charge-history-new',           handler: chargingHistory },
+    // { method: 'get',   path: '/scan-charge-invoice-list-new',      handler: scanChargeInvoices },
+    // { method: 'get',   path: '/scan-charge-invoice-detail-new',    handler: scanChargeInvoiceDetail },
 ];
 
 // Define your upload rules in a config map
@@ -223,13 +245,11 @@ authzAndAuthRoutes.forEach(({ method, path, handler }) => {
         middlewares.push(handleFileUpload(rule.folder, rule.fields, rule.maxCount));
     } 
     middlewares.push(apiAuthorization);
-    // middlewares.push(apiAuthentication);
+    middlewares.push(apiAuthentication);
     router[method](path, ...middlewares, handler);
 });
 router.post('/validate-coupon', redeemCoupon);
 router.post('/auto-pay', autoPay);
-
-router.get('/send-bulk-emailer', bulkEmailSend);
 
 // One Time routes
 //router.post('/pod-invoice-history', apiAuthorization, makeBookingHistoryPOD);

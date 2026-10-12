@@ -5,18 +5,6 @@ import moment from "moment-timezone";
 
 import { taskQueue  } from "../taskQueue.js";
 
-// For Bulk Emailer
-import path from 'path';
-import { fileURLToPath } from 'url';
-import transporter from '../mailer.js';
-import fs from "fs";
-import emailQueue from "../emailQueue.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// End For Bulk Emailer
-
 export function addTaskQ(fn) {
     return taskQueue.add(fn);
 }
@@ -278,84 +266,3 @@ export const makeBookingHistoryValet = asyncHandler(async (req, resp) => {
     }
     return resp.json({ length: invoiceList.length, message: "Data in tasks queued " });
 });
-
-
-
-export const bulkEmailSend = async (req, resp) => {
-    try {
-        const htmlFilePath = path.join(__dirname, "PlusXEmailer.html");
-        const emailHtml    = fs.readFileSync(htmlFilePath, "utf8");
-
-        const [results] = await db.execute(`
-            SELECT id, rider_email
-            FROM riders
-            WHERE rider_email IS NOT NULL AND rider_email != '' AND id > 1650 AND id <= 1700
-            GROUP BY rider_email
-        `);
-        const recipients = results.map(row => row.rider_email);
-        // console.log(recipients);
-
-        //  "rishabhkumar@shunyaekai.tech",  , "chintan@plusxelectric.com"
-        // const recipientsStatic = ["ravi@shunyaekai.tech", "sukarn@shunyaekai.tech"]; 
-
-        for (const email of recipients) {
-            emailQueue.addEmail(
-                email,
-                "Buy or Lease VinFast & Get 60 FREE Doorstep Charging Sessions",
-                emailHtml
-            );
-        }
-
-        return resp.json({
-            status: 1,
-            message: "Emails added to queue successfully",
-            total: recipients.length
-        });
-
-    } catch (err) {
-        console.error("Error in sending mail:", err);
-
-        return resp.status(500).json({
-            status: 0,
-            message: err.message
-        });
-    }
-};
-export const bulkEmailSendOld = async (req, resp) => {
-    // return resp.json({ message : 'Not working' });
-    
-    const htmlFilePath = path.join(__dirname, "PlusXEmailer.html");
-    const emailHtml = fs.readFileSync(htmlFilePath, "utf8");
-    try { 
-       
-        const recipients = db.query("SELECT rider_email FROM riders group by rider_email limit 0, 10", async (err, results) => {
-            if (err) {
-                 
-                return resp.json({ Users : err.message });
-            } else {
-                 
-                // const recipients = results.map(row => row.rider_email); 
-                const recipients = ["ravi@shunyaekai.tech", "rishabhkumar@shunyaekai.tech"]; 
-                
-                for (let email of recipients) {
-                
-                    emailQueue.addEmail(email, 'PlusX Electric Early Bird Offer: Charge Your EV for Just AED 30!', emailHtml);
-                    
-                }
-                return resp.json({
-                    message  : recipients,
-                });
-            }
-        });
-        
-    } catch(err) {
-        console.log('Error in sending mail', err);
-        return resp.json({
-            message  : err,
-        });
-        
-    }
-};
-
- 
- 

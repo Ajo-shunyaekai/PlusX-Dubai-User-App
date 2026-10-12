@@ -14,7 +14,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { tryCatchErrorHandler } from "../middleware/errorHandler.js";
-import { io } from '../server.js';
+import client, { io } from '../server.js'; // client: MQTT relay OFF for scan-charge cron
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -130,6 +130,9 @@ const BookingConfirm = async (bookingType, bookingId, paymentIntentId, couponCod
         case 'RSA':
             await rsaBookingConfirm(bookingId, paymentIntentId, couponCode);
             break;
+        case 'SCI':
+            await scanChargerInvoiceConfirm(bookingId, paymentIntentId);
+            break;
         default:
             console.log('Unknown booking type');
     }
@@ -142,7 +145,7 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
     try { 
         const checkOrder = await queryDB(`
             SELECT pcb.rider_id, pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude,
-            pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent
+            pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent, pcb.package_data
             FROM 
                 portable_charger_booking as pcb
             LEFT JOIN
@@ -174,42 +177,55 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                 await db.execute('UPDATE portable_charger_subscriptions SET total_booking = total_booking + 1 WHERE rider_id = ?', [checkOrder.rider_id]);
             }
             const href    = 'portable_charger_booking/' + booking_id;
-            const heading = 'Portable Charging Booking!';
+            // const heading = 'Portable Charging Booking!';
+            const heading = 'Mobile & Portable EV Charging Service Booking!';
             const desc    = `Booking Confirmed! ${booking_id}`;
-            createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', checkOrder.rider_id, href);
-            createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', checkOrder.rider_id, href);
+            // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', checkOrder.rider_id, href);
+            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
-            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 5%' : '0%' ;
+            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
+            const packageData      = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
+            const chargingFee      = parseFloat(packageData?.price || 0);
+            const chargingFeeVat   = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
+            const packageHtml      = packageData ? `<p>Package Details:</p>
+                    <p>Package Name : ${packageData.package_name}</p>
+                    <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+                    <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
             const htmlUser = `<html>
                 <body>
                     <h4>Dear ${checkOrder.user_name},</h4>
-                    <p>Thank you for choosing our portable charger service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
+                    <p>Thank you for choosing our mobile & portable EV charging service for your EV. We are pleased to confirm that your booking has been successfully received.</p> 
                     <p>Booking Details:</p>
                     <p>Booking ID: ${booking_id}</p>
                     <p>Date and Time of Service: ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p>
                     <p>We look forward to serving you and providing a seamless EV charging experience.</p>
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Portable EV Charger', htmlUser);
+            emailQueue.addEmail(checkOrder.rider_email, 'PlusX Electric App: Booking Confirmation for Your Mobile & Portable EV Charging Service', htmlUser);
 
             const htmlAdmin = `<html>
                 <body>
                     <h4>Dear Admin,</h4>
-                    <p>We have received a new booking for our Portable Charger service. Please find the details below:</p> 
+                    <p>We have received a new booking for our mobile & portable EV charging service. Please find the details below:</p> 
                     <p>Customer Name : ${checkOrder.user_name}</p>
                     <p>Contact No.   : ${checkOrder.country_code}-${checkOrder.contact_no}</p>
                     <p>Address       : ${checkOrder.address}</p>            
                     <p>Service Date & Time : ${moment(checkOrder.slot_date, 'YYYY MM DD').format('D MMM, YYYY,')} ${moment(checkOrder.slot_time, 'HH:mm').format('h:mm A')}</p>       
                     <p>Vechile Details : ${checkOrder.vehicle_data}</p>
+                    ${packageHtml}
                     <p>Vehicle Battery Percentages : ${battery_percent}</p> 
                     <a href="https://www.google.com/maps?q=${checkOrder.latitude},${checkOrder.longitude}">Address Link</a><br>
                     <p> Best regards,<br/>PlusX Electric Team </p>
                 </body>
             </html>`;
-            emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${booking_id}`, htmlAdmin);
+            // emailQueue.addEmail(process.env.MAIL_POD_ADMIN, `Portable Charger Booking - ${booking_id}`, htmlAdmin);
+            emailQueue.addEmail([process.env.MAIL_POD_ADMIN, process.env.MAIL_CHINTAN_SHUNYA], `Mobile & Portable EV Charging Service Booking - ${booking_id}`, htmlAdmin);
             
             io.emit('notification-list', {msCount : 1});
             
@@ -418,6 +434,29 @@ const rsaBookingConfirm = async (request_id, payment_intent_id, couponCode) => {
     }
 };
 
+const scanChargerInvoiceConfirm = async (invoice_id, payment_intent_id) => {
+    console.log('Webhooks Scan Charge Invoice');
+    try {
+        const checkOrder = await queryDB(`
+            SELECT invoice_id, rider_id
+            FROM scan_charger_invoice
+            WHERE invoice_id = ? AND invoice_status = ?
+            LIMIT 1
+        `, [invoice_id, 0]);
+
+        if (!checkOrder) {
+            return false;
+        }
+        await updateRecord('scan_charger_invoice', { invoice_status : 1, payment_intent_id }, ['invoice_id', 'rider_id'], [invoice_id, checkOrder.rider_id]);
+
+        return true;
+    } catch(err) {
+        console.error("Transaction failed:", err);
+        tryCatchErrorHandler('stripe-SCI-confirm', err, []);
+        return false;
+    }
+};
+
 export const failedPODBooking = async () => {
     // const conn = await db.getConnection();
     try {
@@ -518,5 +557,69 @@ export const failedRSABooking = async () => {
         // conn.release();
         console.log("RSA Data connection released!");
         return "connection released";
+    }
+};
+
+/**
+ * Scan charge — 3-minute plug-in check (cron backup).
+ *
+ * chargingStart also schedules startChargingCheck via setTimeout after 3 min.
+ * That timer is lost on server restart; this cron runs every minute so sessions
+ * are still validated from the DB.
+ *
+ * Logic: status S + started >= 3 min ago → if energy did not increase vs start_kwh,
+ * mark Failed (F) and turn charger relay OFF (not plugged in / no draw).
+ */
+export const scanChargePlugCheckCron = async () => {
+    try {
+        // Active sessions old enough to verify (same 3 min window as chargingStart)
+        const [rows] = await db.execute(`
+            SELECT
+                b.booking_id,
+                b.charger_id,
+                b.start_kwh,
+                b.start_time,
+                (
+                    SELECT cc.energy
+                    FROM community_chargers cc
+                    WHERE cc.charger_id = b.charger_id
+                    LIMIT 1
+                ) AS current_energy
+            FROM scan_charger_booking b
+            WHERE b.status = 'S'
+              AND b.created_at <= NOW() - INTERVAL 3 MINUTE
+        `);
+
+        for (const row of rows) {
+            const startKwh         = parseFloat(row.start_kwh) || 0;
+            const currentReading   = parseFloat(row.current_energy) || 0;
+            const totalConsumption = parseFloat(currentReading) - parseFloat(startKwh);
+
+            // Energy increased → charging started; leave session as S
+            if (totalConsumption != 0) continue;
+
+            // Zero kWh delta → fail session (mirrors startChargingCheck in ScanChargeController)
+            const start_time_moment = moment(row.start_time, "YYYY-MM-DD HH:mm:ss", "Asia/Dubai");
+            const end_time            = moment().subtract(1, "hour").subtract(30, "minutes");
+            const diffInMinutes       = end_time.diff(start_time_moment, "minutes");
+
+            await updateRecord(
+                "scan_charger_booking",
+                {
+                    total_consumption : totalConsumption,
+                    total_duration    : diffInMinutes,
+                    end_time          : moment(end_time, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD HH:mm:ss"),
+                    end_kwh           : currentReading,
+                    status            : "F",
+                },
+                ["booking_id"],
+                [row.booking_id]
+            );
+
+            client.publish(`/supro/EVONE/${row.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
+        }
+    } catch (err) {
+        console.error("scanChargePlugCheckCron error:", err);
+        tryCatchErrorHandler("scan-charge-plug-check-cron", err, []);
     }
 };

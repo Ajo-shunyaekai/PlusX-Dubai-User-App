@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 node_modules/
 controller-Old/
 routesOld/
@@ -15,3 +16,37 @@ mailer - Copy.js
 Plusx-User-App-V11-22-July.zip
 routesOld/
 controllerOld/
+=======
+# Dependencies
+node_modules/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+public/firebase-files/*.json
+!public/firebase-files/.gitkeep
+# Logs
+*.log
+npm-debug.log*
+error.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Uploads & generated files (keep folder structure if needed locally)
+public/uploads/*
+!public/uploads/.gitkeep
+
+# Archives & backups
+Archive/
+Archive.zip
+Archive copy.zip
+
+# Optional local assets
+assets/
+>>>>>>> origin/Ajo

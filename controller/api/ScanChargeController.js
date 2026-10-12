@@ -39,22 +39,41 @@ export const chargingStart = async (req, resp) => {
         const startDate = moment().startOf("month").subtract(4, "hours").format("YYYY-MM-DD HH:mm:ss");
         const endDate   = moment().endOf("month").subtract(4, "hours").format("YYYY-MM-DD HH:mm:ss");
         
-        const bookingData = await queryDB(`
+        //Existing query skipped  checks for new riders with 0 bookings
+        // const bookingData = await queryDB(`
+        //     SELECT
+        //         scb.status, 
+        //         ( SELECT COUNT(*) FROM scan_charger_booking WHERE rider_id = ? AND created_at BETWEEN ? AND ? ) AS total_session,
+        //         ( SELECT COUNT(*) FROM scan_charger_booking WHERE charger_id = ? AND status = ? ) AS chek_charger_booking 
+        //     FROM scan_charger_booking scb
+        //     WHERE scb.rider_id = ? 
+        //     LIMIT 1`,  [ rider_id, startDate, endDate, charger_id, "S", rider_id ]
+        // );
+        // if( bookingData && bookingData.status == "S" ){ 
+        //     return resp.json({ message : ["A booking is currently running. Please end the current session before creating a new booking."], status: 0, code: 422, error: true });
+        // }
+        // if( bookingData && bookingData.chek_charger_booking ){
+        //     return resp.json({ message : ["The charger is already occupied"], status: 0, code: 422, error: true });
+        // }
+        // if( bookingData && bookingData.total_session >= chargeData.monthly_session_allocation ){ 
+        //     return resp.json({ message : ["You have reached the maximum number of allowed sessions."], status: 0, code: 422, error: true });
+        // }
+
+        // Fixed: always returns one row of counts 
+        const sessionChecks = await queryDB(`
             SELECT
-                scb.status, 
-                ( SELECT COUNT(*) FROM scan_charger_booking WHERE rider_id = ? AND created_at BETWEEN ? AND ? ) AS total_session,
-                ( SELECT COUNT(*) FROM scan_charger_booking WHERE charger_id = ? AND status = ? ) AS chek_charger_booking 
-            FROM scan_charger_booking scb
-            WHERE scb.rider_id = ? 
-            LIMIT 1`,  [ rider_id, startDate, endDate, charger_id, "S", rider_id ]
+                ( SELECT COUNT(*) FROM scan_charger_booking WHERE rider_id = ? AND status = ? ) AS active_session,
+                ( SELECT COUNT(*) FROM scan_charger_booking WHERE rider_id = ? AND created_at BETWEEN ? AND ? AND status <> 'F' ) AS total_session,
+                ( SELECT COUNT(*) FROM scan_charger_booking WHERE charger_id = ? AND status = ? ) AS chek_charger_booking
+            `, [ rider_id, "S", rider_id, startDate, endDate, charger_id, "S" ]
         );
-        if( bookingData && bookingData.status == "S" ){ 
+        if( sessionChecks?.active_session > 0 ){ 
             return resp.json({ message : ["A booking is currently running. Please end the current session before creating a new booking."], status: 0, code: 422, error: true });
         }
-        if( bookingData && bookingData.chek_charger_booking ){
+        if( sessionChecks?.chek_charger_booking > 0 ){
             return resp.json({ message : ["The charger is already occupied"], status: 0, code: 422, error: true });
         }
-        if( bookingData && bookingData.total_session >= chargeData.monthly_session_allocation ){ 
+        if( sessionChecks?.total_session >= chargeData.monthly_session_allocation ){ 
             return resp.json({ message : ["You have reached the maximum number of allowed sessions."], status: 0, code: 422, error: true });
         }
         if( chargeData.resident_mobile != chargeData.rider_mobile ) {
@@ -62,10 +81,9 @@ export const chargingStart = async (req, resp) => {
         }
         const chargeMeterData = await queryDB(`
             SELECT energy
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ? AND updated_at >= NOW() - INTERVAL 5 MINUTE
-            ORDER BY id DESC
-            LIMIT 1 `, [ charger_id] 
+            LIMIT 1 `, [ charger_id]
         );
         if(!chargeMeterData) {
 
@@ -85,7 +103,6 @@ export const chargingStart = async (req, resp) => {
         const end_time          = null;
         const start_kwh         = chargeMeterData?.energy || 0;
         const end_kwh           = 0;
-        
         const resident_data = {
             community_name  : chargeData.community_name,
             area_name       : chargeData.area_name,  
@@ -134,7 +151,7 @@ export const startChargingCheck = async (charger_id, booking_id) => {
         const chargingData = await queryDB(`
             SELECT 
                 start_time, start_kwh,
-                (SELECT energy from scan_charger_data WHERE charger_id = ? ORDER BY id DESC LIMIT 1 ) as energy 
+                (SELECT energy FROM community_chargers WHERE charger_id = ? LIMIT 1) AS energy 
             FROM scan_charger_booking b 
             WHERE booking_id = ? AND b.status = ? AND b.created_at >= NOW() - INTERVAL 4 MINUTE
             LIMIT 1 `, [ charger_id, booking_id, 'S' ]
@@ -195,10 +212,9 @@ export const stopCharge = async (req, resp) => {
 
         const chargeData = await queryDB(`
             SELECT energy
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ?
-            ORDER BY id DESC
-            LIMIT 1 `, [ chargingData.charger_id] 
+            LIMIT 1 `, [ chargingData.charger_id]
         );
         const currentReading = chargeData?.energy || 0;
         const start_time    = moment(chargingData?.start_time, "YYYY-MM-DD HH:mm:ss", "Asia/Dubai");
@@ -208,7 +224,7 @@ export const stopCharge = async (req, resp) => {
         const resident_data     = chargingData?.resident_data;
         const alloted_time      = resident_data.alloted_time;
         
-        const total_consumption = ( parseFloat(currentReading) - parseFloat(chargingData.start_kwh)).toFixed(3);
+        const total_consumption = ( parseFloat(currentReading) - parseFloat(chargingData.start_kwh)).toFixed(2);
         const total_duration    = diffInMinutes;
         const extra_minutes     = diffInMinutes > alloted_time ? parseFloat(diffInMinutes) - parseFloat(alloted_time) : 0;
         const end_kwh           = currentReading;
@@ -223,10 +239,10 @@ export const stopCharge = async (req, resp) => {
         };
         const insert = await updateRecord('scan_charger_booking', updates, ['booking_id'], [ booking_id ]);
         
-        if(insert.affectedRows == 0) return resp.json({status:0, message: "Failed to Completed Charge! Please try again after some time."});
+        if(insert.affectedRows == 0) return resp.json({status:0, message: "Failed to Stop Charge! Please try again after some time."});
  
         client.publish(`/supro/EVONE/${chargingData.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
-        return resp.json({ status : 1, code : 200, message : [ "Charging Completed successfully."] });
+        return resp.json({ status : 1, code : 200, message : [ "Charging Stop successfully."] });
  
     } catch (error) {
         console.log('Something went wrong in add charge share', error);
@@ -256,10 +272,10 @@ export const chargingDetail = async (req, resp) => {
         if(chargingData.status == "F") {
              
             const [contentData] = await db.execute(`
-                SELECT content, sub_module, additional_content
+                SELECT content, sub_module
                 FROM response_content
                 WHERE module_name = ? AND sub_module IN (?, ?) AND status = 1
-                ORDER BY id ASC `, [ "scan-charger", "Possible reasons:", "What you can do:" ] 
+                ORDER BY id DESC `, [ "scan-charger", "Possible reasons:", "What you can do:" ] 
             );
             const grouped = {};
             for (const { sub_module, content } of contentData) {
@@ -269,14 +285,13 @@ export const chargingDetail = async (req, resp) => {
                 grouped[sub_module].contents.push(content);
             }
             const result = Object.values(grouped);
-            return resp.json( { status : 0, code : 201, message : [], errorInfo : result, teamContactNo : contentData[0]?.additional_content } );
+            return resp.json( { status : 0, code : 201, message : result } );
         }
         const chargeData = await queryDB(`
             SELECT energy, power, charger_max_speed
-            FROM scan_charger_data
+            FROM community_chargers
             WHERE charger_id = ?
-            ORDER BY id DESC
-            LIMIT 1 `, [ chargingData.charger_id] 
+            LIMIT 1 `, [ chargingData.charger_id]
         );
         const currentReading  = chargeData?.energy || 0;
 

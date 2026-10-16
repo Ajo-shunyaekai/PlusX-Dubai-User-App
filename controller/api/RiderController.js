@@ -311,7 +311,7 @@ export const verifyOTP = asyncHandler(async (req, resp) => {
         `UPDATE riders
          SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
              added_from = CASE
-                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl') THEN ?
+                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community') THEN ?
                  ELSE added_from
              END
          WHERE rider_mobile = ? AND country_code = ?`,

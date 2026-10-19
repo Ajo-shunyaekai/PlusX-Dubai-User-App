@@ -20,26 +20,118 @@ const linkChargerInstallationInquiryToRider = async (riderId, riderMobile) => {
     );
 };
 
-// Link admin offline RSA bookings, invoices, and order history to rider when mobile_no matches rider_mobile
-const linkOfflineRsaToRider = async (riderId, riderMobile) => {
+const OFFLINE_RIDER_SOURCES = ['Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl'];
+
+const isIncompleteOfflineRider = (rider) => {
+    if (!rider) return false;
+    const source = String(rider.added_from || '').trim();
+    if (!OFFLINE_RIDER_SOURCES.includes(source)) return false;
+    // Admin-created riders usually have no access_token until first app login/register.
+    return !rider.access_token || Number(rider.status) === 0;
+};
+
+const splitCustomerName = (fullName = '') => {
+    const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return { first_name: '', last_name: '' };
+    return {
+        first_name: parts[0],
+        last_name : parts.length > 1 ? parts.slice(1).join(' ') : '',
+    };
+};
+
+// Link admin offline RSA bookings (and invoice/history) by mobile and/or email.
+// On match, set rider_id + overwrite customer_name & emirates from the signup user.
+const linkOfflineRsaToRider = async (riderId, riderMobile, riderEmail = null, profile = {}) => {
+    const mobile = riderMobile || null;
+    const email  = riderEmail || null;
+    if (!mobile && !email) return;
+
     await db.execute(
-        `UPDATE rsa_offline_booking SET rider_id = ? WHERE mobile_no = ? AND rider_id IS NULL`,
-        [riderId, riderMobile]
+        `UPDATE rsa_offline_booking
+         SET rider_id = ?,
+             customer_name = ?,
+             emirates = ?,
+             email_id = COALESCE(NULLIF(TRIM(email_id), ''), ?),
+             mobile_no = COALESCE(NULLIF(TRIM(mobile_no), ''), ?)
+         WHERE rider_id IS NULL
+           AND (
+                (? IS NOT NULL AND mobile_no = ?)
+             OR (? IS NOT NULL AND email_id = ?)
+           )`,
+        [
+            riderId,
+            profile.customer_name || null,
+            profile.emirates || null,
+            email,
+            mobile,
+            mobile, mobile,
+            email, email,
+        ]
     );
+
     await db.execute(
         `UPDATE rsa_offline_invoice roi
          INNER JOIN rsa_offline_booking rob ON rob.request_id = roi.request_id
          SET roi.rider_id = ?
-         WHERE rob.mobile_no = ? AND roi.rider_id IS NULL`,
-        [riderId, riderMobile]
+         WHERE roi.rider_id IS NULL
+           AND (
+                (? IS NOT NULL AND rob.mobile_no = ?)
+             OR (? IS NOT NULL AND rob.email_id = ?)
+             OR rob.rider_id = ?
+           )`,
+        [riderId, mobile, mobile, email, email, riderId]
     );
+
     await db.execute(
         `UPDATE rsa_offline_order_history roh
          INNER JOIN rsa_offline_booking rob ON rob.request_id = roh.order_id
          SET roh.rider_id = ?
-         WHERE rob.mobile_no = ? AND roh.rider_id IS NULL`,
-        [riderId, riderMobile]
+         WHERE roh.rider_id IS NULL
+           AND (
+                (? IS NOT NULL AND rob.mobile_no = ?)
+             OR (? IS NOT NULL AND rob.email_id = ?)
+             OR rob.rider_id = ?
+           )`,
+        [riderId, mobile, mobile, email, email, riderId]
     );
+};
+
+const getOfflineBookingPrefill = async (mobile, email = null) => {
+    const booking = await queryDB(
+        `SELECT customer_name, mobile_no, email_id, country_code, emirates
+         FROM rsa_offline_booking
+         WHERE (
+                (? IS NOT NULL AND mobile_no = ?)
+             OR (? IS NOT NULL AND email_id = ?)
+           )
+         ORDER BY id DESC
+         LIMIT 1`,
+        [mobile, mobile, email, email]
+    );
+    if (!booking) return null;
+
+    const { first_name, last_name } = splitCustomerName(booking.customer_name);
+    return {
+        first_name,
+        last_name,
+        rider_email  : booking.email_id || null,
+        rider_mobile : booking.mobile_no || mobile || null,
+        country_code : booking.country_code || '+971',
+        emirates     : booking.emirates || null,
+    };
+};
+
+const getRiderPrefill = (rider) => {
+    if (!rider) return null;
+    return {
+        first_name   : rider.rider_name || '',
+        last_name    : rider.last_name || '',
+        rider_email  : rider.rider_email || null,
+        rider_mobile : rider.rider_mobile || null,
+        country_code : rider.country_code || '+971',
+        emirates     : rider.emirates || null,
+        rider_id     : rider.rider_id || null,
+    };
 };
 
 /* Rider Auth */
@@ -116,33 +208,78 @@ export const register = asyncHandler(async (req, resp) => {
     const cachedOtp  = getOTP(fullMobile);
     if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
 
-    const rider = await insertRecord('riders', 
-    [
-        'rider_id', 'rider_name', 'last_name', 'rider_email', 'country_code', 'rider_mobile', 'emirates', 'status', 'added_from' 
-    ],[ 
-        'ER', first_name, last_name, rider_email, country_code, rider_mobile, emirates, 
-        0, added_from || 'Android' 
-    ]);
-    if(!rider) return resp.json({status:0, code:405, message: ["Failed to register. Please Try Again"], error: true}); 
+    const existingRider = await queryDB(
+        `SELECT id, rider_id, rider_email, access_token, status, added_from
+         FROM riders
+         WHERE rider_mobile = ?
+         LIMIT 1`,
+        [rider_mobile]
+    );
 
-    const riderId = 'ER' + String(rider.insertId).padStart(4, '0');
-    const token   = crypto.randomBytes(12).toString('hex');
-    const updtObj = {
-        rider_id     : riderId,
-        access_token : token, 
-        status       : 1, 
-        fcm_token    : fcm_token
+    if (existingRider && !isIncompleteOfflineRider(existingRider)) {
+        return resp.json({
+            status  : 0,
+            code    : 422,
+            message : ['The provided number already exists. Please login.'],
+        });
     }
-    await updateRecord('riders', updtObj, ['id'], [ rider.insertId ]);
 
-    // Link admin-created offline RSA bookings to this rider when mobile_no matches rider_mobile
-    await linkOfflineRsaToRider(riderId, rider_mobile);
-    // Link admin-created charger installation inquiries (fail-soft: never block registration)
-    // try {
-    //     await linkChargerInstallationInquiryToRider(riderId, rider_mobile);
-    // } catch (linkErr) {
-    //     console.error('[register] charger installation inquiry link skipped:', linkErr.message);
-    // }
+    const emailTaken = await queryDB(
+        `SELECT rider_id FROM riders
+         WHERE rider_email = ? AND rider_id != ?
+         LIMIT 1`,
+        [rider_email, existingRider?.rider_id || '']
+    );
+    if (emailTaken?.rider_id) {
+        return resp.json({ status: 0, code: 422, message: ['Email already registered.'] });
+    }
+
+    const platform = resolveAppPlatform(added_from);
+    const token    = crypto.randomBytes(12).toString('hex');
+    let riderId;
+
+    if (existingRider && isIncompleteOfflineRider(existingRider)) {
+        // Complete admin-created offline rider instead of inserting a duplicate.
+        riderId = existingRider.rider_id;
+        await updateRecord('riders', {
+            rider_name   : first_name,
+            last_name    : last_name,
+            rider_email  : rider_email,
+            country_code : country_code,
+            emirates     : emirates,
+            access_token : token,
+            status       : 1,
+            fcm_token    : fcm_token,
+            added_from   : platform,
+        }, ['id'], [existingRider.id]);
+    } else {
+        const rider = await insertRecord('riders',
+        [
+            'rider_id', 'rider_name', 'last_name', 'rider_email', 'country_code', 'rider_mobile', 'emirates', 'status', 'added_from'
+        ],[
+            'ER', first_name, last_name, rider_email, country_code, rider_mobile, emirates,
+            0, platform
+        ]);
+        if(!rider) return resp.json({status:0, code:405, message: ["Failed to register. Please Try Again"], error: true});
+
+        riderId = 'ER' + String(rider.insertId).padStart(4, '0');
+        await updateRecord('riders', {
+            rider_id     : riderId,
+            access_token : token,
+            status       : 1,
+            fcm_token    : fcm_token
+        }, ['id'], [ rider.insertId ]);
+    }
+
+    // If offline booking matches signup mobile OR email, push rider_id / name / emirates onto it.
+    try {
+        await linkOfflineRsaToRider(riderId, rider_mobile, rider_email, {
+            customer_name : `${first_name} ${last_name}`.trim(),
+            emirates,
+        });
+    } catch (linkErr) {
+        console.error('[register] offline RSA link skipped:', linkErr.message);
+    }
 
     delOTP(fullMobile);
 
@@ -183,18 +320,46 @@ export const regsCreateOTP = asyncHandler(async (req, resp) => {
     if(res.status == 0) return resp.json({ status : 0, code : 422, message : res.msg });
 
     const fullMobile = `${country_code}${mobile}`;
-    const [[isExist]] = await db.execute(`
-        SELECT rider_mobile, 
-            (SELECT COUNT(*) FROM riders AS r WHERE r.rider_email = ?) AS check_email,
-            (SELECT COUNT(*) FROM riders AS r1 WHERE r1.rider_mobile = ?) AS check_mob,
-            (SELECT COUNT(*) FROM rsa WHERE rsa.mobile = ? ) AS rsa_mob
-        FROM 
-            riders
-        LIMIT 1 `, [rider_email, mobile, fullMobile ]
-    );
-    if(isExist.check_mob > 0 || isExist.rsa_mob > 0 ) return resp.json({ status:0, code:422, message: ['The provided number already exists.'] });
 
-    if(isExist.check_email > 0 ) return resp.json({ status : 0, code : 422, message : ['Email already registered.'] });
+    const existingRider = await queryDB(
+        `SELECT rider_id, rider_name, last_name, rider_email, country_code, rider_mobile, emirates,
+                access_token, status, added_from
+         FROM riders
+         WHERE rider_mobile = ?
+         LIMIT 1`,
+        [mobile]
+    );
+
+    const [[rsaRow]] = await db.execute(
+        `SELECT COUNT(*) AS rsa_mob FROM rsa WHERE mobile = ?`,
+        [fullMobile]
+    );
+    if (rsaRow.rsa_mob > 0) {
+        return resp.json({ status: 0, code: 422, message: ['The provided number already exists.'] });
+    }
+
+    if (existingRider && !isIncompleteOfflineRider(existingRider)) {
+        return resp.json({
+            status  : 0,
+            code    : 422,
+            message : ['The provided number already exists. Please login.'],
+        });
+    }
+
+    const emailTaken = await queryDB(
+        `SELECT rider_id FROM riders
+         WHERE rider_email = ? AND rider_id != ?
+         LIMIT 1`,
+        [rider_email, existingRider?.rider_id || '']
+    );
+    if (emailTaken?.rider_id) {
+        return resp.json({ status: 0, code: 422, message: ['Email already registered.'] });
+    }
+
+    let prefill = getRiderPrefill(existingRider);
+    if (!prefill) {
+        prefill = await getOfflineBookingPrefill(mobile, rider_email);
+    }
 
     const otp = generateOTP(4);
     storeOTP(fullMobile, otp);
@@ -205,7 +370,16 @@ export const regsCreateOTP = asyncHandler(async (req, resp) => {
     )
     .then(result => {
         if (result.status === 0) return resp.json(result);
-        return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
+        return resp.json({
+            status                   : 1,
+            code                     : 200,
+            data                     : '',
+            message                  : ['OTP sent successfully!'],
+            can_register             : 1,
+            incomplete_offline_rider : existingRider && isIncompleteOfflineRider(existingRider) ? 1 : 0,
+            has_offline_booking      : prefill && !existingRider ? 1 : 0,
+            prefill                  : prefill || null,
+        });
     })
     .catch(err => {
         tryCatchErrorHandler(req.originalUrl, err, resp, 'Failed to send OTP' );
@@ -229,7 +403,17 @@ export const createOTP = asyncHandler(async (req, resp) => {
     const [rows]     = await db.execute(checkCountQuery, [mobile, country_code]);
     const checkCount = rows[0].count;
     
-    if (checkCount == 0) return resp.json({ status: 0, code: 422, message: ['The provided mobile number is not registered.'] });
+    if (checkCount == 0) {
+        const bookingPrefill = await getOfflineBookingPrefill(mobile);
+        return resp.json({
+            status              : 0,
+            code                : 422,
+            message             : ['The provided mobile number is not registered. Kindly sign up.'],
+            needs_registration  : 1,
+            has_offline_booking : bookingPrefill ? 1 : 0,
+            prefill             : bookingPrefill || null,
+        });
+    }
     
     const fullMobile = `${country_code}${mobile}`;
     let otp          = ( mobile == 508509508 || mobile == '508509508') ? "2404" : generateOTP(4);
@@ -319,6 +503,21 @@ export const verifyOTP = asyncHandler(async (req, resp) => {
     );
 
     delOTP(fullMobile);
+
+    try {
+        await linkOfflineRsaToRider(
+            riderData.rider_id,
+            mobile,
+            riderData.rider_email,
+            {
+                customer_name : `${riderData.rider_name || ''} ${riderData.last_name || ''}`.trim(),
+                emirates      : riderData.emirates,
+            }
+        );
+    } catch (linkErr) {
+        console.error('[verifyOTP] offline RSA link skipped:', linkErr.message);
+    }
+
     let respResult = {
         image_url     : `${process.env.DIR_UPLOADS}rider_profile/`,
         rider_id      : riderData.rider_id,

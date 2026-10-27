@@ -5,7 +5,7 @@ import emailQueue from "../../emailQueue.js";
 import validateFields from "../../validation.js";
 import { insertRecord, queryDB, updateRecord } from '../../dbUtils.js';
 import db from "../../config/db.js";
-import { createNotification, mergeParam, pushNotification, formatDateTimeInQuery, asyncHandler, formatDateInQuery, checkCoupon } from "../../utils.js";
+import { createNotification, mergeParam, pushNotification, formatDateTimeInQuery, asyncHandler, formatDateInQuery, checkCoupon, termsForNewBooking, getStoredTerms } from "../../utils.js";
 dotenv.config();
 
 import { tryCatchErrorHandler } from "../../middleware/errorHandler.js";
@@ -194,11 +194,12 @@ export const requestService = asyncHandler(async (req, resp) => {
         if (bookingCount >= bookingLimit) {
             return resp.json({ message : ["The slot you selected has already been booked. Please select another slot"], status: 0, code: 422, error: true });
         }
+        const { termsVersionId, termsAcceptedAt } = await termsForNewBooking('pick-drop');
         const insert = await insertRecord('charging_service', [
-            'request_id', 'vehicle_data', 'rider_id', 'name', 'country_code', 'contact_no', 'vehicle_id', 'slot', 'slot_date_time', 'pickup_address', 'parking_number', 'parking_floor', 
-            'price', 'order_status', 'pickup_latitude', 'pickup_longitude', 'device_name', 'area', 'address_id', 'booking_price'
+            'request_id', 'vehicle_data', 'rider_id', 'name', 'country_code', 'contact_no', 'vehicle_id', 'slot', 'slot_date_time', 'pickup_address', 'parking_number', 'parking_floor',
+            'price', 'order_status', 'pickup_latitude', 'pickup_longitude', 'device_name', 'area', 'address_id', 'booking_price', 'terms_version_id', 'terms_accepted_at'
         ], [
-            'CS', riderAddress.vehicle_data, rider_id, name, country_code, contact_no, vehicle_id, slot_id, slotDateTime, pickup_address, parking_number, parking_floor, price, order_status, pickup_latitude, pickup_longitude, device_name, area, address_id, riderAddress.booking_price
+            'CS', riderAddress.vehicle_data, rider_id, name, country_code, contact_no, vehicle_id, slot_id, slotDateTime, pickup_address, parking_number, parking_floor, price, order_status, pickup_latitude, pickup_longitude, device_name, area, address_id, riderAddress.booking_price, termsVersionId, termsAcceptedAt
         ]);
 
         if(insert.affectedRows === 0) return resp.json({status:0, code:200, message : ["Oops! Something went wrong. Please try again."]}); 
@@ -289,7 +290,8 @@ export const getServiceOrderDetail = asyncHandler(async (req, resp) => {
     const bookingWithNull = await queryDB(`
         SELECT 
             charging_service.*, ROUND(charging_service.price / 100, 2) AS price,
-            ${formatDateTimeInQuery(formatCols)} 
+            ${formatDateTimeInQuery(formatCols)},
+            DATE_FORMAT(CONVERT_TZ(charging_service.terms_accepted_at, 'UTC', 'Asia/Dubai'), '%Y-%m-%d %H:%i:%s') AS terms_accepted_display
         FROM 
             charging_service 
         WHERE 
@@ -297,6 +299,11 @@ export const getServiceOrderDetail = asyncHandler(async (req, resp) => {
         LIMIT 1
     `, [service_id]);
     if(!bookingWithNull) return resp.json({ status: 0, code: 404, message: ["There are no booking available for the provided booking ID."] });
+    const termsVersionId = bookingWithNull.terms_version_id;
+    const termsAcceptedAt = bookingWithNull.terms_accepted_display;
+    delete bookingWithNull.terms_version_id;
+    delete bookingWithNull.terms_accepted_at;
+    delete bookingWithNull.terms_accepted_display;
     const order = Object.fromEntries(
         Object.entries(bookingWithNull).map(([key, value]) => [
             key,
@@ -325,6 +332,7 @@ export const getServiceOrderDetail = asyncHandler(async (req, resp) => {
         history[lastValue].order_status = 'RPD'
     }
     const newHistory =  await makeBookingHistory(history);
+    order.terms = await getStoredTerms(termsVersionId, termsAcceptedAt);
     return resp.json({
         message       : ["Service Order Details fetched successfully!"],
         order_data    : order,

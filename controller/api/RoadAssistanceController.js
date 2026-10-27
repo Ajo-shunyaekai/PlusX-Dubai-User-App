@@ -4,7 +4,7 @@ import emailQueue from "../../emailQueue.js";
 import validateFields from "../../validation.js";
 import { insertRecord, queryDB, getPaginatedData, updateRecord } from '../../dbUtils.js';
 import db from "../../config/db.js";
-import { asyncHandler, createNotification, formatDateTimeInQuery, mergeParam, checkCoupon } from '../../utils.js';
+import { asyncHandler, createNotification, formatDateTimeInQuery, mergeParam, checkCoupon, termsForNewBooking, getStoredTerms } from '../../utils.js';
 dotenv.config();
 import { tryCatchErrorHandler } from "../../middleware/errorHandler.js";
 import { io } from '../../server.js';
@@ -24,11 +24,12 @@ const storage = multer.diskStorage({
 export const upload = multer({ storage: storage });
 
 export const addRoadAssistance = asyncHandler(async (req, resp) => {
-    const { rider_id, user_name, country_code, contact_no, address, latitude, longitude, vehicle_id, address_id, parking_number='', parking_floor ='', service_price= 0, device_name = '', coupon_code='', battery_percent = 1
+    const { rider_id, rider_mobile, user_name, country_code, contact_no, address, latitude, longitude, vehicle_id, address_id, parking_number='', parking_floor ='', service_price= 0, device_name = '', coupon_code='', battery_percent = 1
     } = mergeParam(req);
 
     const { isValid, errors } = validateFields(mergeParam(req), {
         rider_id      : ["required"], 
+        rider_mobile  : ["required"],
         user_name     : ["required"], 
         country_code  : ["required"], 
         contact_no    : ["required"], 
@@ -70,8 +71,45 @@ export const addRoadAssistance = asyncHandler(async (req, resp) => {
         }
         if(riderAddress.vehicle_data == '' || riderAddress.vehicle_data == null) return resp.json({ message : ["Vehicle Id not valid!"], status: 0, code: 422, error: true });
         
+        const currDay   = moment().utcOffset(4).format('YYYY-MM-DD');
+        const vendorPackage = await queryDB(`
+            SELECT 
+                vc.customer_id, vc.rsa_charging_session_number, vc.rsa_charging_session_validity,
+                vc.package_data, vc.purchase_date,
+                (
+                    SELECT count(*)
+                    FROM road_assistance as rs
+                    WHERE DATE(rs.created_at) >= purchase_date AND DATE(rs.created_at) <= rsa_charging_session_validity AND rs.order_status NOT IN ('C') AND rs.rider_id = ?
+                    AND JSON_UNQUOTE(JSON_EXTRACT(rs.package_data, '$.customer_id')) = vc.customer_id
+                ) as sessionBooking
+            FROM vendor_customers vc
+            WHERE vc.mobile_number = ?
+            ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_mobile ]
+        );
+        let packagePrice = riderAddress.slot_price;
+        let packageData  = {};
+        if(vendorPackage && service_price == 0) {
+
+            const sessionNumber    = vendorPackage.rsa_charging_session_number;
+            const sessionBooking   = vendorPackage.sessionBooking;
+            const session_validity = vendorPackage.rsa_charging_session_validity;
+            const sessionValidity  = moment(session_validity, 'YYYY-MM-DD').format('YYYY-MM-DD');
+            
+            let package_Price = (sessionValidity < currDay)       ? riderAddress.slot_price : 0;
+                package_Price = (sessionBooking >= sessionNumber) ? riderAddress.slot_price : package_Price
+            
+            packagePrice = package_Price;
+            if(package_Price == 0) {
+                packageData = {
+                    customer_id      : vendorPackage.customer_id,
+                    purchase_date    : vendorPackage.purchase_date,
+                    session_validity : sessionValidity,
+                    session_number   : sessionNumber
+                }
+            }
+        }
         const additional_price = (battery_percent == 0 ) ? parseFloat(riderAddress.additional_price) : 0.0 ;
-        const booking_price    = parseFloat( riderAddress.slot_price ) + parseFloat( additional_price );
+        const booking_price    = parseFloat( packagePrice ) + parseFloat( additional_price );
         const vatAmt           = Math.floor(( booking_price ) * 5) / 100; 
         const bookingPrice     = Math.floor( ( parseFloat(booking_price) + parseFloat(vatAmt) ) * 100) ;
 
@@ -98,7 +136,7 @@ export const addRoadAssistance = asyncHandler(async (req, resp) => {
                 return resp.json({ 
                     message      : ['The booking price is invalid.'], 
                     status       : 0, 
-                    code         : 201, 
+                    code         : 201,
                     error        : true, 
                     bookingPrice : parseFloat(booking_price).toFixed(2), 
                     couponPrice  : parseFloat(couponData.dis_price).toFixed(2), 
@@ -109,17 +147,18 @@ export const addRoadAssistance = asyncHandler(async (req, resp) => {
         const area         = riderAddress.landmark;
         const vehicle_data = riderAddress.vehicle_data;
         
+        const { termsVersionId, termsAcceptedAt } = await termsForNewBooking('road-assistance');
         const insert = await insertRecord('road_assistance', [
-            'request_id', 'rider_id', 'name', 'country_code', 'contact_no', 'address_id', 'pickup_address', 'pickup_latitude', 'pickup_longitude', 'parking_number', 'parking_floor', 'vehicle_id', 'price', 'order_status', 'device_name', 'area', 'current_percent', 'vehicle_data', 'booking_price'
+            'request_id', 'rider_id', 'name', 'country_code', 'contact_no', 'address_id', 'pickup_address', 'pickup_latitude', 'pickup_longitude', 'parking_number', 'parking_floor', 'vehicle_id', 'price', 'order_status', 'device_name', 'area', 'current_percent', 'vehicle_data', 'booking_price', 'package_data', 'terms_version_id', 'terms_accepted_at'
         ], [
-            'RAO', rider_id, user_name, country_code, contact_no, address_id, address, latitude, longitude, parking_number, parking_floor, vehicle_id, service_price, 'PNR', device_name, area, battery_percent, vehicle_data, booking_price
+            'RAO', rider_id, user_name, country_code, contact_no, address_id, address, latitude, longitude, parking_number, parking_floor, vehicle_id, service_price, 'PNR', device_name, area, battery_percent, vehicle_data, booking_price, packageData, termsVersionId, termsAcceptedAt
         ]);
 
         if(insert.affectedRows === 0) return resp.json({status:0, code:200, message: ['Oops! There is something went wrong! Please Try Again.']});
 
         const requestId = 'RAO' + String(insert.insertId).padStart(4, '0');
         await updateRecord('road_assistance', { request_id : requestId }, ['id'], [insert.insertId] );
-
+        console.log('[RSA][1-CREATE]', { rider_id, requestId, order_status: 'PNR', service_price });
         return resp.json({
             status     : 1, 
             code       : 200, 
@@ -130,6 +169,116 @@ export const addRoadAssistance = asyncHandler(async (req, resp) => {
         console.log("Transaction failed:", err);
         tryCatchErrorHandler(req.originalUrl, err, resp );
     }  
+});
+
+export const roadAssistanceListOld = asyncHandler(async (req, resp) => {
+    const {rider_id, page_no, bookingStatus } = mergeParam(req); 
+        
+    const { isValid, errors } = validateFields(mergeParam(req), {rider_id: ["required"], page_no: ["required"]});
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    const limit           = 10;
+    const start           = ( page_no * limit ) - limit;
+    
+    let statusCondition = (bookingStatus == 'CM' ) ? `order_status IN (?, ?, ?)` : `order_status IN (?)`;
+    let statusParams    = (bookingStatus == 'C' ) ? ['C'] : ['RO', 'PU', 'CC'];
+    statusParams        = (bookingStatus == 'S' ) ? ['CNF'] : statusParams;
+    const orderBy       = 'ORDER BY id DESC';
+    
+    const totalQuery  = `SELECT COUNT(*) AS total FROM road_assistance WHERE rider_id = ? AND ${statusCondition}`;
+    const [totalRows] = await db.execute(totalQuery, [rider_id, ...statusParams]);
+    const total       = totalRows[0].total;
+
+    const bookingsQuery = `
+        SELECT 
+            request_id, ROUND(road_assistance.price/100, 2) AS price, name, country_code, contact_no, order_status, ${formatDateTimeInQuery(['created_at'])}, pickup_address
+        FROM 
+            road_assistance 
+        WHERE 
+            rider_id = ? AND ${statusCondition} ${orderBy}
+    `;
+    const [bookingList] = await db.execute(bookingsQuery, [rider_id, ...statusParams]);
+
+    // Fetch admin-created offline RSA bookings linked to this rider (rider_id set on register)
+    const offlineTotalQuery = `SELECT COUNT(*) AS total FROM rsa_offline_booking WHERE rider_id = ? AND ${statusCondition}`;
+    const [offlineTotalRows] = await db.execute(offlineTotalQuery, [rider_id, ...statusParams]);
+    const offlineTotal = offlineTotalRows[0].total;
+
+    // Map offline booking fields to the same list shape as online road_assistance rows
+    const offlineBookingsQuery = `
+        SELECT 
+            request_id,
+            booking_price AS price,
+            customer_name AS name,
+            '' AS country_code,
+            mobile_no AS contact_no,
+            order_status,
+            ${formatDateTimeInQuery(['created_at'])},
+            address AS pickup_address,
+            1 AS is_offline
+        FROM 
+            rsa_offline_booking 
+        WHERE 
+            rider_id = ? AND ${statusCondition} ${orderBy}
+    `;
+    const [offlineBookingList] = await db.execute(offlineBookingsQuery, [rider_id, ...statusParams]);
+
+    // Merge online + offline bookings, sort by date, then paginate
+    const mergedBookingList = [...bookingList, ...offlineBookingList]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(parseInt(start), parseInt(start) + limit);
+
+    const mergedTotal     = total + offlineTotal;
+    const mergedTotalPage = Math.max(Math.ceil(mergedTotal / limit), 1);
+    
+    let inProcessBookingList = [];
+    if(bookingStatus === 'S'){
+        const inProcessQuery = `
+            SELECT 
+                request_id, ROUND(road_assistance.price/100, 2) AS price, name, country_code, contact_no, order_status, ${formatDateTimeInQuery(['created_at'])}, pickup_address
+            FROM 
+                road_assistance 
+            WHERE 
+                rider_id = ? AND order_status NOT IN (?, ?, ?, ?, ?, ?) ${orderBy}
+        `;
+        const inProcessParams = ['CNF', 'C', 'PU', 'RO', 'PNR', 'CC'];
+        const [inProcessrow]  = await db.execute(inProcessQuery, [rider_id, ...inProcessParams]);
+
+        // Include in-process offline bookings on the Scheduled tab (same exclusion rule as online)
+        const offlineInProcessQuery = `
+            SELECT 
+                request_id,
+                booking_price AS price,
+                customer_name AS name,
+                '' AS country_code,
+                mobile_no AS contact_no,
+                order_status,
+                ${formatDateTimeInQuery(['created_at'])},
+                address AS pickup_address,
+                1 AS is_offline
+            FROM 
+                rsa_offline_booking 
+            WHERE 
+                rider_id = ? AND order_status NOT IN (?, ?, ?, ?, ?, ?) ${orderBy}
+        `;
+        const [offlineInProcessRows] = await db.execute(offlineInProcessQuery, [rider_id, ...inProcessParams]);
+
+        inProcessBookingList = [...inProcessrow, ...offlineInProcessRows]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(parseInt(start), parseInt(start) + limit);
+    }
+    // Return merged online + offline list with combined pagination totals
+    return resp.json({
+        status     : 1,
+        code       : 200,
+        message    : ["Road Assistance List fetch successfully!"],
+        data       : mergedBookingList,
+        total_page : mergedTotalPage,
+        total      : mergedTotal,
+        inProcessBookingList,
+        base_url    : `${process.env.DIR_UPLOADS}road-assistance/`,
+        noResultMsg : 'There are no recent bookings. Please schedule your booking now.'
+    });
 });
 
 export const roadAssistanceList = asyncHandler(async (req, resp) => {
@@ -237,8 +386,9 @@ export const roadAssistanceDetail = asyncHandler(async (req, resp) => {
 
     const [[bookingWithNull]] = await db.execute(`
         SELECT 
-            request_id, name, country_code, contact_no, pickup_address, order_status, ROUND(road_assistance.price/100, 2) AS price, ${formatDateTimeInQuery(['created_at'])},
-            (select concat(rsa_name, ",", country_code, " ", mobile) from rsa where rsa.rsa_id = road_assistance.rsa_id) as rsa_data, vehicle_id, vehicle_data, current_percent
+            request_id, name, country_code, contact_no, pickup_address, order_status, ROUND(road_assistance.price/100, 2) AS price, ${formatDateTimeInQuery(['created_at', 'terms_accepted_at'])},
+            (select concat(rsa_name, ",", country_code, " ", mobile) from rsa where rsa.rsa_id = road_assistance.rsa_id) as rsa_data, vehicle_id, vehicle_data, current_percent,
+            JSON_UNQUOTE(JSON_EXTRACT(package_data, '$.customer_id')) as package_id, terms_version_id
         FROM 
             road_assistance 
         WHERE 
@@ -285,7 +435,12 @@ export const roadAssistanceDetail = asyncHandler(async (req, resp) => {
     }
 
     if(!bookingRow) return resp.json({ status: 0, code: 404, message: ["There are no booking available for the provided booking ID."] });
-    
+
+    const termsVersionId = isOfflineBooking ? null : bookingRow.terms_version_id;
+    const termsAcceptedAt = isOfflineBooking ? null : bookingRow.terms_accepted_at;
+    delete bookingRow.terms_version_id;
+    delete bookingRow.terms_accepted_at;
+
     const roadAssistance = Object.fromEntries(
         Object.entries(bookingRow).map(([key, value]) => [
             key,
@@ -334,6 +489,10 @@ export const roadAssistanceDetail = asyncHandler(async (req, resp) => {
         `, [order_id, rider_id]);
         newHistory = makeOfflineBookingHistory(history, roadAssistance.created_at, roadAssistance.order_status);
     }
+    
+    roadAssistance.hasRSAPackage = (roadAssistance?.package_id || "").startsWith("VC") ? 1 : 0;
+    roadAssistance.terms = await getStoredTerms(termsVersionId, termsAcceptedAt);
+
     return resp.json({
         message       : ["Road Assistance Details fetched successfully!"],
         order_data    : roadAssistance,

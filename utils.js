@@ -563,6 +563,109 @@ export const getMultipleRoute = async (origin, destinations) => {
     });
     return destinations;
 }
+const parseTermsContent = (content) => {
+  if (Array.isArray(content)) return content.map((item) => String(item));
+  if (content == null || content === '') return [];
+  if (typeof content !== 'string') return [];
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
+};
+
+const termsMatch = (storedContent, bullets) => JSON.stringify(parseTermsContent(storedContent)) === JSON.stringify(bullets);
+
+const sameTermsContent = (stored, bullets) => stored && termsMatch(stored.content, bullets);
+
+const loadActiveTerms = (moduleName) => queryDB(
+  `SELECT id, heading, content, version_no
+   FROM terms_versions
+   WHERE module_name = ? AND status = 1
+   ORDER BY version_no DESC
+   LIMIT 1`,
+  [moduleName]
+);
+
+const loadModuleHeading = async (moduleName) => {
+  const row = await queryDB(
+    `SELECT heading
+     FROM response_module
+     WHERE name = ? AND status = 1 AND (sub_module IS NULL OR sub_module = '')
+     LIMIT 1`,
+    [moduleName]
+  );
+  return row?.heading || '';
+};
+
+const termsSnapshot = (termsVersionId) => ({
+  termsVersionId,
+  termsAcceptedAt: moment.utc().format('YYYY-MM-DD HH:mm:ss'),
+});
+
+export const termsForNewBooking = async (moduleName) => {
+  const [rows] = await db.execute(
+    `SELECT content
+     FROM response_content
+     WHERE module_name = ? AND status = 1 AND response_type IS NULL
+     ORDER BY id ASC`,
+    [moduleName]
+  );
+  const bullets = rows.map((row) => row.content);
+  const heading = await loadModuleHeading(moduleName);
+  const active = await loadActiveTerms(moduleName);
+
+  if (!bullets.length) {
+    if (!active?.id) return { termsVersionId: null, termsAcceptedAt: null };
+    return termsSnapshot(active.id);
+  }
+
+  if (sameTermsContent(active, bullets)) {
+    if (String(active.heading || '') !== String(heading || '')) {
+      await db.execute(`UPDATE terms_versions SET heading = ? WHERE id = ?`, [heading, active.id]);
+    }
+    return termsSnapshot(active.id);
+  }
+
+  const nextVersion = active ? Number(active.version_no) + 1 : 1;
+  try {
+    const insert = await insertRecord(
+      'terms_versions',
+      ['module_name', 'heading', 'content', 'version_no', 'status'],
+      [moduleName, heading, JSON.stringify(bullets), nextVersion, 1]
+    );
+    await db.execute(
+      `UPDATE terms_versions SET status = 0 WHERE module_name = ? AND id <> ?`,
+      [moduleName, insert.insertId]
+    );
+    return termsSnapshot(insert.insertId);
+  } catch (err) {
+    if (!/duplicate/i.test(err?.message || '')) throw err;
+    const again = await loadActiveTerms(moduleName);
+    if (sameTermsContent(again, bullets)) {
+      return termsSnapshot(again.id);
+    }
+    throw err;
+  }
+};
+
+export const getStoredTerms = async (termsVersionId, acceptedAt) => {
+  if (!termsVersionId) return null;
+  const row = await queryDB(
+    `SELECT version_no, heading, content FROM terms_versions WHERE id = ? LIMIT 1`,
+    [termsVersionId]
+  );
+  if (!row) return null;
+  return {
+    accepted: 1,
+    accepted_at: acceptedAt || '',
+    version_no: row.version_no,
+    heading: row.heading || '',
+    content: parseTermsContent(row.content),
+  };
+};
+
 export const  ResponseData=(resp,status, code, message, data = {})=> {
     if (typeof message === 'string') {
         message = [message];

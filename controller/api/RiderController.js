@@ -133,14 +133,13 @@ const getRiderPrefill = (rider) => {
         rider_id     : rider.rider_id || null,
     };
 };
-
 /* Rider Auth */
 const resolveAppPlatform = (added_from = '') => {
     return added_from === 'iOS' ? 'iOS' : 'Android';
 };
 
 export const login = asyncHandler(async (req, resp) => {
-    const { mobile, password ,fcm_token , country_code } = mergeParam(req);
+    const { mobile, password ,fcm_token , country_code, added_from = '' } = mergeParam(req);
 
     const { isValid, errors } = validateFields(mergeParam(req), {
         mobile: ["required"], password: ["required"], fcm_token: ["required"], country_code: ["required"],
@@ -162,7 +161,17 @@ export const login = asyncHandler(async (req, resp) => {
     if (rider.status == 2) return resp.json({ status:0, code:405, error:true, message: ["You can not login as your status is inactive. Kindly contact to customer care"] });
     
     const token    = crypto.randomBytes(12).toString('hex');
-    const [update] = await db.execute(`UPDATE riders SET access_token = ?, status = ?, fcm_token = ? WHERE rider_mobile = ?`, [token, 1, fcm_token, mobile]);
+    const platform = resolveAppPlatform(added_from);
+    const [update] = await db.execute(
+        `UPDATE riders
+         SET access_token = ?, status = ?, fcm_token = ?,
+             added_from = CASE
+                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community' ) THEN ?
+                 ELSE added_from
+             END
+         WHERE rider_mobile = ?`,
+        [token, 1, fcm_token, platform, mobile]
+    );
 
     if(update.affectedRows > 0){
         const result = {
@@ -184,6 +193,7 @@ export const login = asyncHandler(async (req, resp) => {
 });
 
 export const register = asyncHandler(async (req, resp) => {
+    console.log('register called')
     const { 
         first_name, last_name, rider_email, country_code, rider_mobile, emirates, added_from, otp, fcm_token =""  
     } = mergeParam(req);
@@ -308,6 +318,7 @@ export const register = asyncHandler(async (req, resp) => {
 });
 
 export const regsCreateOTP = asyncHandler(async (req, resp) => {
+    console.log('regsCreateOTP called')
     const { mobile, country_code, rider_email } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {
         mobile       : ["required"], 
@@ -441,6 +452,82 @@ export const createOTP = asyncHandler(async (req, resp) => {
             return resp.json({ status: 'error', msg: 'Failed to send OTP' });
         }); 
     }
+});
+
+export const verifyOTPOld = asyncHandler(async (req, resp) => {
+    const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
+    
+    const { isValid, errors } = validateFields(mergeParam(req), { 
+        mobile       : ["required"], 
+        country_code : ["required"], 
+        fcm_token    : ["required"], 
+        otp          : ["required"] 
+    });
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    // is_resident > 0 when mapped to any community (multi-community aware)
+    const riderData = await queryDB(`
+        SELECT
+            rider_id, rider_name, last_name, rider_email, profile_img, country, emirates, status,
+            ( SELECT CASE
+                WHEN ( SELECT COUNT(DISTINCT crm.community_id)
+                       FROM community_resident cr
+                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                       WHERE cr.resident_mobile = ? ) > 0
+                THEN ( SELECT COUNT(DISTINCT crm.community_id)
+                       FROM community_resident cr
+                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
+                       WHERE cr.resident_mobile = ? )
+                WHEN EXISTS ( SELECT 1 FROM community_resident WHERE resident_mobile = ? )
+                THEN 1
+                ELSE 0
+              END
+            ) AS resident_count
+        FROM riders
+        WHERE rider_mobile = ? AND country_code = ?
+        LIMIT 1`, [mobile, mobile, mobile, mobile, country_code]
+    );
+
+    if(!riderData) return resp.json({ 
+        status  : 0, code: 422, 
+        message : ["The mobile number is not registered with us. Kindly sign up."] 
+    });
+    if(riderData.status == 2){
+        return resp.json({status: 1, code: 422, message: ["You can not login as your status is inactive. Kindly contact to customer care"]});
+    }
+    const fullMobile = `${country_code}${mobile}`;
+    const cachedOtp  = getOTP(fullMobile);
+    
+    if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
+
+    const token    = crypto.randomBytes(12).toString('hex');
+    const platform = resolveAppPlatform(added_from);
+    await db.execute(
+        `UPDATE riders
+         SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
+             added_from = CASE
+                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community' ) THEN ?
+                 ELSE added_from
+             END
+         WHERE rider_mobile = ? AND country_code = ?`,
+        [token, fcm_token, device_name, platform, mobile, country_code]
+    );
+
+    delOTP(fullMobile);
+    let respResult = {
+        image_url     : `${process.env.DIR_UPLOADS}rider_profile/`,
+        rider_id      : riderData.rider_id,
+        rider_name    : riderData.rider_name,
+        last_name     : riderData.last_name,
+        rider_email   : riderData.rider_email,
+        profile_img   : riderData.profile_img,
+        rider_mobile  : mobile,
+        country_code  : country_code,        
+        emirates      : riderData.emirates,
+        access_token  : token,
+        is_resident   : riderData.resident_count,
+    };
+    return resp.json({message: [ "Login successful!" ], status: 1, code: 200, is_login: 1, result: respResult});
 });
 
 export const verifyOTP = asyncHandler(async (req, resp) => {
@@ -612,7 +699,7 @@ export const updatePassword = asyncHandler(async (req, resp) => {
 });
 
 /* Rider Info */
-export const home = asyncHandler(async (req, resp) => {
+export const homeOld = asyncHandler(async (req, resp) => {
     const {rider_id} = mergeParam(req);
     if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
     
@@ -693,6 +780,22 @@ export const home = asyncHandler(async (req, resp) => {
             ? Number((Number(portableOriginalPrice) - Number(portablePrice)).toFixed(2))
             : null;
 
+    const chargingPackageData = [
+        {
+            charging_package_name: 'Mobile & Portable\nEV Charging',
+            sessions_validity: "2027-01-12",
+            total_charging_sessions: 60,
+            used_charging_sessions: 12,
+            remaining_charging_sessions: 48,
+        }, {
+            charging_package_name: 'EV Roadside\nAssistance',
+            sessions_validity: "2027-01-12",
+            total_charging_sessions: 10,
+            used_charging_sessions: 2,
+            remaining_charging_sessions: 8,
+        },
+    ];
+
     return resp.json({
         message                   : ["Rider Home Data fetched successfully!"],
         rider_data                : result,
@@ -706,7 +809,213 @@ export const home = asyncHandler(async (req, resp) => {
         pick_drop_price           : priceData.pick_drop_price,
         status                    : 1,
         code                      : 200,
-        scanChargingData
+        scanChargingData,
+        chargingPackageData
+    });
+});
+
+export const home = asyncHandler(async (req, resp) => {
+    const {rider_id} = mergeParam(req);
+    if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
+    
+    const riderQuery = `
+        SELECT
+            r.rider_id, r.rider_name, r.rider_mobile,
+            (
+                SELECT COUNT(*)
+                FROM notifications n
+                WHERE n.panel_to = 'Rider' AND n.receive_id = r.rider_id AND n.status = '0'
+            ) AS notification_count,
+            (
+                SELECT COUNT(*)
+                FROM community_resident cr
+                WHERE cr.resident_mobile = r.rider_mobile
+            ) AS resident_count,
+            (
+                SELECT COUNT(*)
+                FROM purchase_history pu
+                WHERE pu.customer_mobile = r.rider_mobile
+            ) AS purchase_history_count,
+            (
+                SELECT COUNT(*)
+                FROM charge_share cs
+                WHERE cs.rider_id = r.rider_id AND cs.charger_status = 1
+            ) AS charge_share_count
+        FROM riders r
+        WHERE r.rider_id = ?
+        LIMIT 1
+    `;
+    const riderData = await queryDB(riderQuery, [rider_id]);
+
+    if (!riderData) return resp.json({ message: "Rider not found", status: 0 });
+
+    const result = {
+        rider_id               : riderData.rider_id,
+        rider_name             : riderData.rider_name,
+        notification_count     : riderData.notification_count,
+        is_resident            : riderData.resident_count,
+        purchase_history_count : riderData.purchase_history_count,
+        charge_share_count     : riderData.charge_share_count,
+    };
+    // 2. Calculate UAE current day and time once.
+    const now      = moment().utcOffset("+04:00");
+    const currDate = now.format("dddd");
+    const currTime = now.format("HH:mm:ss");
+    const rider_mobile = riderData.rider_mobile;
+
+    const [ orderData, pickDropData, podBookingData, priceData, scanChargingData, packageCountObj ] = await Promise.all([
+        // Road assistance
+        queryDB( `
+            SELECT
+                ra.request_id, ra.created_at,
+                (
+                    SELECT CONCAT( rsa_name, ',', country_code, ' ', mobile )
+                    FROM rsa
+                    WHERE rsa_id = ra.rsa_id
+                ) AS rsaDetails
+            FROM road_assistance ra
+            WHERE ra.rider_id = ? AND ra.order_status NOT IN ( 'PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC' )
+            ORDER BY ra.id DESC
+            LIMIT 1 `,[rider_id]
+        ),
+        // Pick and drop / charging service
+        queryDB(`
+            SELECT
+                cs.request_id, cs.created_at,
+                (
+                    SELECT CONCAT( rsa_name, ',', country_code, ' ', mobile )
+                    FROM rsa
+                    WHERE rsa_id = cs.rsa_id
+                ) AS rsaDetails
+            FROM charging_service cs
+            WHERE cs.rider_id = ? AND cs.order_status NOT IN ( 'CNF', 'A', 'WC', 'C', 'PNR', 'DO' )
+            ORDER BY cs.id DESC
+            LIMIT 1 `, [rider_id]
+        ),
+        // Portable charger booking
+        queryDB(`
+            SELECT
+                pcb.booking_id AS request_id, pcb.created_at,
+                (
+                    SELECT CONCAT( rsa_name, ',', country_code, ' ', mobile )
+                    FROM rsa
+                    WHERE rsa_id = pcb.rsa_id
+                ) AS rsaDetails
+            FROM portable_charger_booking pcb
+            WHERE pcb.rider_id = ? AND pcb.status NOT IN ( 'PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC' )
+            ORDER BY pcb.id DESC
+            LIMIT 1 `, [rider_id]
+        ),
+        // Booking prices
+        queryDB(`
+            SELECT
+                bp.portable_price,
+                bp.pick_drop_price,
+                (
+                    SELECT ras.slot_price
+                    FROM road_assistance_slot ras
+                    WHERE ras.status = 1 AND ras.slot_date = ? AND ? BETWEEN ras.start_time AND ras.end_time
+                    ORDER BY ras.start_time ASC
+                    LIMIT 1
+                ) AS slot_price
+            FROM booking_price bp
+            LIMIT 1 `, [ currDate, currTime ]
+        ),
+        // Scan charging details
+        scanChargingDetail(rider_id),
+        // package count
+        queryDB(`
+            SELECT count(*) as packageCount   
+            FROM vendor_customers
+            WHERE mobile_number = ? `, [ rider_mobile ]
+        )
+    ]);
+
+    // 4. Assign ETA values without repeating conditions.
+    if (orderData) {
+        orderData.eta_time = "12 Min.";
+    }
+    if (pickDropData) {
+        pickDropData.eta_time = "11 Min.";
+    }
+    if (podBookingData) {
+        podBookingData.eta_time = "11 Min.";
+    }
+
+    
+    const packagedata = await queryDB(`
+        SELECT 
+            vc.customer_id, vc.pod_charging_session_number, vc.pod_charging_session_validity,
+            vc.rsa_charging_session_number, vc.rsa_charging_session_validity,
+            vc.package_data, vc.purchase_date,
+            (
+                SELECT count(*)
+                FROM portable_charger_booking as pcb
+                WHERE DATE(pcb.created_at) >= purchase_date AND DATE(pcb.created_at) <= pod_charging_session_validity AND pcb.status NOT IN ('C')
+                AND JSON_UNQUOTE(JSON_EXTRACT(pcb.package_data, '$.package_id')) = vc.customer_id
+                AND pcb.rider_id = ? 
+            ) as sessionBooking,
+            (
+                SELECT count(*)
+                FROM road_assistance as rs
+                WHERE DATE(rs.created_at) >= vc.purchase_date AND DATE(rs.created_at) <= vc.rsa_charging_session_validity AND rs.order_status NOT IN ('C')
+                AND rs.rider_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(rs.package_data, '$.customer_id')) = vc.customer_id
+            ) as rsaSessionBooking
+        FROM vendor_customers vc
+        WHERE vc.mobile_number = ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile ]
+    );
+    const chargingPackageData = [];
+    if(packagedata) {
+        if(packagedata.pod_charging_session_number) { 
+
+            const sessionBooking    = packagedata.sessionBooking;
+            const allotedSession    = packagedata.pod_charging_session_number
+            const remainingSessions = allotedSession - sessionBooking
+
+            if(remainingSessions > 0) {
+                chargingPackageData.push({
+                    charging_package_name       : 'Mobile EV Charging',
+                    sessions_validity           : packagedata.pod_charging_session_validity,
+                    total_charging_sessions     : allotedSession,
+                    used_charging_sessions      : sessionBooking,
+                    remaining_charging_sessions : remainingSessions,
+                    package_id                  : packagedata.package_data.package_id,
+                    charging_capacity           : packagedata.package_data.charging_capacity
+                });
+            }
+        }
+        if(packagedata.rsa_charging_session_number) { 
+            
+            const sessionBooking    = packagedata.rsaSessionBooking;
+            const allotedSession    = packagedata.rsa_charging_session_number
+            const remainingSessions = allotedSession - sessionBooking
+            
+            if(remainingSessions > 0) {
+                chargingPackageData.push({
+                    charging_package_name       : 'Roadside Assistance Service',
+                    sessions_validity           : packagedata.rsa_charging_session_validity,
+                    total_charging_sessions     : allotedSession,
+                    used_charging_sessions      : sessionBooking,
+                    remaining_charging_sessions : remainingSessions,
+                });
+            }
+        }
+    }
+    return resp.json({
+        message                   : ["Rider Home Data fetched successfully!"],
+        rider_data                : result,
+        order_data                : orderData || null,
+        pick_drop_order           : pickDropData || null,
+        pod_booking               : podBookingData || null,
+        roadside_assistance_price : priceData.slot_price || 0,
+        portable_price            : priceData.portable_price,
+        pick_drop_price           : priceData.pick_drop_price,
+        status                    : 1,
+        code                      : 200,
+        scanChargingData    : scanChargingData,
+        chargingPackageData : chargingPackageData,
+        packageCount        : packageCountObj.packageCount
     });
 });
 

@@ -43,26 +43,48 @@ export const chargerList = asyncHandler(async (req, resp) => {
 });
 
 export const packageList = asyncHandler(async (req, resp) => {
-    const { rider_id } = mergeParam(req);
+    const { rider_id, rider_mobile } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {
-        rider_id: ["required"]
+        rider_id     : ["required"],
+        rider_mobile : ["required"]
     });
     if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
-    const [packages] = await db.execute(`
-        SELECT
-            id,
-            package_id,
-            package_name,
-            CAST(charging_capacity AS UNSIGNED) AS charging_capacity,
-            CAST(price_per_unit AS DECIMAL(10,2)) AS price_per_unit,
-            CAST(service_fee AS DECIMAL(10,2)) AS service_fee,
-            CAST(price AS DECIMAL(10,2)) AS charging_fee
-        FROM portable_charger_charging_packages
-        WHERE status = 1 AND is_deleted = 0 AND order_id IS NULL
-        ORDER BY charging_capacity ASC
-    `);
+    const currDate   = moment().utcOffset(4).format('YYYY-MM-DD');
 
+    const packagedata = await queryDB( `
+        SELECT
+            JSON_UNQUOTE( JSON_EXTRACT(package_data, '$.package_id') ) AS package_id,
+            pod_charging_session_number,
+            (
+                SELECT count(*)
+                FROM portable_charger_booking as pcb
+                WHERE DATE(pcb.created_at) >= purchase_date AND DATE(pcb.created_at) <= DATE(pod_charging_session_validity) AND pcb.status NOT IN ('C')
+                AND JSON_UNQUOTE(JSON_EXTRACT(pcb.package_data, '$.package_id')) = customer_id
+                AND pcb.rider_id = ? 
+            ) as sessionBooking
+        FROM vendor_customers
+        WHERE mobile_number = ? AND pod_charging_session_validity >= ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_mobile, currDate ]  // pod_charging_session_number
+    );
+    const podSessionNumber = packagedata?.pod_charging_session_number ?? 0;
+    const sessionBooking   = packagedata?.sessionBooking ?? 0;
+    const package_id       = (sessionBooking < podSessionNumber) ? packagedata.package_id : "";
+    
+    const [packages] = await db.execute( `
+        SELECT
+            p.id, p.package_id, p.package_name,
+            CAST(p.charging_capacity AS UNSIGNED) AS charging_capacity,
+            CAST(p.price_per_unit AS DECIMAL(10, 2)) AS price_per_unit,
+            CAST(p.service_fee AS DECIMAL(10, 2)) AS service_fee,
+            CASE
+                WHEN p.package_id = ? THEN 0
+                ELSE CAST(p.price AS DECIMAL(10, 2))
+            END AS charging_fee
+        FROM portable_charger_charging_packages AS p
+        WHERE p.status = 1 AND p.is_deleted = 0 AND p.order_id IS NULL
+        ORDER BY charging_capacity ASC `, [ package_id ]
+    );
     return resp.json({
         status       : 1,
         code         : 200,
@@ -178,177 +200,17 @@ export const getPcSlotList = asyncHandler(async (req, resp) => {
 });
 
 //booking controller without package
-export const chargerBookingOld = asyncHandler(async (req, resp) => {
-console.log("chargerBooking", req.body, req.params);
-    let { rider_id, user_name, country_code, contact_no, address, latitude, longitude, parking_number= '',
-        parking_floor='', vehicle_id, slot_date, slot_time, slot_id, service_name, service_type, service_feature, service_price= 0, address_id, device_name ='', coupon_code='', battery_percent = 1
-    } = mergeParam(req);
-    service_name = service_name || 'Mobile & Portable EV Charging Service';
-
-    const { isValid, errors } = validateFields(mergeParam(req), {
-        rider_id        : ["required"],
-        user_name       : ["required"],
-        country_code    : ["required"],
-        contact_no      : ["required"],
-        address         : ["required"],
-        latitude        : ["required"],
-        longitude       : ["required"],
-        vehicle_id      : ["required"],
-        slot_date       : ["required"],
-        slot_time       : ["required"],
-        slot_id         : ["required"],
-        // service_name    : ["required"],
-        service_type    : ["required"],
-        service_feature : ["required"],
-        address_id      : ["required"],
-    });
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    try {
-        const riderAddress = await queryDB(`
-            SELECT 
-                landmark, (select address_alert from portable_charger_booking where rider_id =? and address = ? order by id desc LIMIT 1) as address_alert,
-                (SELECT CONCAT(vehicle_make, ", ", vehicle_model, ", ", vehicle_specification, ", ", emirates, "-", vehicle_code, "-", vehicle_number) FROM riders_vehicles where rider_id =? and vehicle_id = ? ) AS vehicle_data,
-                ( SELECT portable_price FROM booking_price LIMIT 1) as booking_price,
-                (
-                    CASE 
-                        WHEN ? = 0 THEN 
-                            (SELECT pod_additional_price FROM booking_price LIMIT 1)
-                        ELSE NULL 
-                    END
-                ) AS additional_price
-            FROM 
-                rider_address
-            WHERE 
-                rider_id =? and address_id = ? order by id desc
-            LIMIT 1 `,
-        [ rider_id, address, rider_id, vehicle_id, battery_percent, rider_id, address_id ]);
-        
-        if(!riderAddress) return resp.json({ message : ["Address Id not valid!"], status: 0, code: 422, error: true });
-        if(riderAddress.vehicle_data == '') return resp.json({ message : ["Vehicle Id not valid!"], status: 0, code: 422, error: true });
-        
-        const additional_price = ( battery_percent == 0 ) ? parseFloat(riderAddress.additional_price || 0) : 0.0 ;
-        const booking_price    = parseFloat( riderAddress.booking_price ) + parseFloat( additional_price );
-        const vatAmt           = Math.floor(( booking_price ) * 5) / 100; 
-        const bookingPrice     = Math.floor( ( booking_price + vatAmt ) * 100) ;
-
-        if(parseFloat(service_price) != bookingPrice && coupon_code == '') { 
-            return resp.json({ 
-                message      : ['The booking price is invalid.'], 
-                status       : 0, 
-                code         : 201, 
-                error        : true, 
-                bookingPrice : parseFloat(booking_price).toFixed(2), 
-                vatAmt       : parseFloat(vatAmt).toFixed(2), 
-                couponPrice  : parseFloat(0).toFixed(2)
-            });
-        }
-        else if(parseFloat(service_price) != bookingPrice && coupon_code) {
-            const servicePrice = parseFloat(service_price) ;
-            const couponData   = await checkCoupon(rider_id, 'POD-On Demand Service', coupon_code);
-
-            if(couponData.status == 0 ){
-                return resp.json({ message : [couponData.message], status: 0, code: 422, error: true });
-
-            } else if(servicePrice != couponData.service_price ){
-                return resp.json({ 
-                    message      : ['The booking price is invalid.'], 
-                    status       : 0, 
-                    code         : 201, 
-                    error        : true, 
-                    bookingPrice : parseFloat(couponData.service_price ).toFixed(2), 
-                    couponPrice  : parseFloat(couponData.dis_price).toFixed(2),
-                    vatAmt       : parseFloat(couponData.vat_amt).toFixed(2),
-                });
-            }
-        }
-        const addressAlert = riderAddress.address_alert || '';
-        const area         = riderAddress.landmark;
-        const vehicle_data = riderAddress.vehicle_data;
-
-        const fSlotDateTime = moment(slot_date + ' ' + slot_time, 'YYYY-MM-DD HH:mm:ss').format('YYYY-MM-DD HH:mm:ss')
-        const currDateTime  = moment().utcOffset(4).format('YYYY-MM-DD HH:mm:ss');
-        if (fSlotDateTime < currDateTime) return resp.json({status: 0, code: 422, message: ["Invalid slot, Please select another slot"]});
-
-        const fSlotDate = moment(slot_date, 'YYYY-MM-DD').format('YYYY-MM-DD');
-        const currDate  = moment().format('YYYY-MM-DD');
-
-        // 1. Lock all bookings for this slot
-        const [lockedRows] = await db.execute(
-            `SELECT id
-            FROM portable_charger_booking
-            WHERE slot_time = ? AND slot_date = ? AND status NOT IN ('C')
-            FOR UPDATE`,
-            [slot_time, fSlotDate]  //'PU', 'RO'
-        ); 
-        const bookingCount = lockedRows.length;
-
-        // 2. Get slot limit , current_count 
-        const [slotLimitRows] = await db.execute( `
-            SELECT booking_limit
-            FROM portable_charger_slot
-            WHERE slot_date = ? AND start_time = ? LIMIT 1 
-            FOR UPDATE`,
-            [fSlotDate, slot_time]
-        );
-        if (slotLimitRows.length === 0) {
-            return resp.json({ message : ["The slot you selected has already been booked. Please select another slot"], status: 0, code: 422, error: true });
-        }
-        const bookingLimit = slotLimitRows[0].booking_limit;
-
-        // 3.  Double-check limit AFTER locking
-        if (bookingCount >= bookingLimit) {
-            
-            return resp.json({ message : ["The slot you selected has already been booked. Please select another slot"], status: 0, code: 422, error: true });
-        }
-        if (service_type.toLowerCase() === "get monthly subscription") {
-            const [subsCountRows] = await db.execute(`SELECT COUNT(*) AS count FROM portable_charger_subscription WHERE rider_id = ? AND (total_booking >= 10 OR expiry_date < ?) `,
-                [rider_id, currDate]
-            );
-            const subsCount = subsCountRows[0].count;
-            if (subsCount > 0) {
-                return resp.json({ message: ["Subscription limit exceeded or expired!"], status: 0, code: 422, error: true });
-            }
-        }
-        const insert = await insertRecord('portable_charger_booking', [
-            'booking_id', 'rider_id', 'vehicle_id', 'service_name', 'service_price', 'service_type', 'service_feature', 'user_name', 'country_code', 'contact_no', 'slot', 'slot_date', 'slot_time', 'address', 'latitude', 'longitude', 'status', 'address_alert', 'parking_number', 'parking_floor', 'address_id', 'device_name', 'area', 'vehicle_data', 'current_percent', 'booking_price'
-        ], [
-            'PCB', rider_id, vehicle_id, service_name, service_price, service_type, service_feature, user_name, country_code, contact_no, slot_id, fSlotDate, slot_time, address, latitude, longitude, 'PNR', addressAlert, parking_number, parking_floor, address_id, device_name, area, vehicle_data, battery_percent, booking_price
-        ]); 
-        if(insert.affectedRows == 0) {
-           return resp.json({status:0, code:200, message: ["Oops! Something went wrong. Please try again."]});
-        }
-        const booking_id = 'PCB' + String( insert.insertId ).padStart(4, '0');
-        
-        await updateRecord('portable_charger_booking', { booking_id : booking_id }, ['id'], [insert.insertId] );
-        return resp.json({
-            status        : 1,
-            code          : 200,
-            booking_id    : booking_id,
-            service_price : service_price,
-            message       : ["Booking Request Received!."]
-        });
-
-    } catch(err) {
-        console.log("Transaction failed:", err);
-        tryCatchErrorHandler(req.originalUrl, err, resp);
-
-    } finally {
-
-    }
-});
 
 //booking controller with package
 export const chargerBooking = asyncHandler(async (req, resp) => {
-    console.log("chargerBooking", req.body, req.params);
-        let { rider_id, user_name, country_code, contact_no, address, latitude, longitude, parking_number= '',
-            parking_floor='', vehicle_id, slot_date, slot_time, slot_id, service_name, service_type, service_feature, 
-            service_price= 0, address_id, device_name ='', coupon_code='', battery_percent = 1, package_id
-        } = mergeParam(req);
+    
+    let { rider_id, rider_mobile, user_name, country_code, contact_no, address, latitude, longitude, parking_number= '', parking_floor='', vehicle_id, slot_date, slot_time, slot_id, service_name, service_type, service_feature, service_price= 0, address_id, device_name ='', coupon_code='', battery_percent = 1, package_id
+    } = mergeParam(req);
         service_name = service_name || 'Mobile & Portable EV Charging Service';
     
         const { isValid, errors } = validateFields(mergeParam(req), {
             rider_id        : ["required"],
+            rider_mobile    : ["required"],
             user_name       : ["required"],
             country_code    : ["required"],
             contact_no      : ["required"],
@@ -359,7 +221,6 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
             slot_date       : ["required"],
             slot_time       : ["required"],
             slot_id         : ["required"],
-            // service_name    : ["required"],
             service_type    : ["required"],
             service_feature : ["required"],
             address_id      : ["required"],
@@ -391,23 +252,49 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
 
             const packageData = await queryDB(`
                 SELECT
-                    package_id,
-                    package_name,
-                    charging_capacity,
-                    price,
-                    price_per_unit,
-                    service_fee,
-                    description
+                    package_id, package_name, charging_capacity, price, price_per_unit, service_fee, description
                 FROM portable_charger_charging_packages
                 WHERE package_id = ? AND status = 1 AND is_deleted = 0 AND order_id IS NULL`, [package_id]
             );
             if (!packageData) return resp.json({ message: ["Package Id not valid!"], status: 0, code: 422, error: true });
 
+            let packagePrice = packageData.price;
+            const currDate   = moment().utcOffset(4).format('YYYY-MM-DD');
+            if( service_price == 0  ) {
+                const vendorPackage = await queryDB(`
+                    SELECT 
+                        vc.customer_id, vc.pod_charging_session_number, vc.pod_charging_session_validity,
+                        vc.package_data, vc.purchase_date,
+                        (
+                            SELECT count(*)
+                            FROM portable_charger_booking as pcb
+                            WHERE DATE(pcb.created_at) >= purchase_date AND DATE(pcb.created_at) <= pod_charging_session_validity AND pcb.status NOT IN ('C')
+                            AND JSON_UNQUOTE(JSON_EXTRACT(pcb.package_data, '$.package_id')) = vc.customer_id AND pcb.rider_id = ? 
+                        ) as sessionBooking
+                    FROM vendor_customers vc
+                    WHERE vc.mobile_number = ?
+                    ORDER BY vc.id DESC LIMIT 1 `, [ rider_id, rider_mobile ]
+                );
+                if(vendorPackage && package_id == ( vendorPackage?.package_data?.package_id || "" )) {
+    
+                    const sessionBooking  = vendorPackage?.sessionBooking || 0;
+                    
+                    const sessionValidity = moment(vendorPackage.pod_charging_session_validity, 'YYYY-MM-DD').format('YYYY-MM-DD'); //14 62 2026-10-14 2027-10-08
+                     
+                    if (sessionValidity < currDate) return resp.json({status: 0, code: 422, message: ["Package has been expired, Please select another package"]});
+    
+                    if(sessionBooking >= vendorPackage.pod_charging_session_number) return resp.json({status: 0, code: 422, message: ["You have reach the pakcage booking limit"]});
+    
+                    packagePrice = 0;
+                    packageData.package_id = vendorPackage.customer_id; 
+                }
+            }
             const additional_price = ( battery_percent == 0 ) ? parseFloat(riderAddress.additional_price || 0) : 0.0 ;
-            const subTotal         = Number(packageData.price || 0) + additional_price;
-            const vatAmt           = Math.floor(( subTotal ) * 5) / 100;
-            const booking_price    = subTotal;
-            const bookingPrice     = Math.floor( ( subTotal + vatAmt ) * 100 );
+            
+            const subTotal      = Number(packagePrice || 0) + additional_price;
+            const vatAmt        = Math.floor(( subTotal ) * 5) / 100;
+            const booking_price = subTotal;
+            const bookingPrice  = Math.floor( ( subTotal + vatAmt ) * 100 );
     
             if(parseFloat(service_price) != bookingPrice && coupon_code == '') { 
                 return resp.json({ 
@@ -448,7 +335,7 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
             if (fSlotDateTime < currDateTime) return resp.json({status: 0, code: 422, message: ["Invalid slot, Please select another slot"]});
     
             const fSlotDate = moment(slot_date, 'YYYY-MM-DD').format('YYYY-MM-DD');
-            const currDate  = moment().format('YYYY-MM-DD');
+            
     
             // 1. Lock all bookings for this slot
             const [lockedRows] = await db.execute(
@@ -487,7 +374,6 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
                     return resp.json({ message: ["Subscription limit exceeded or expired!"], status: 0, code: 422, error: true });
                 }
             }
-
             const grossAmount    = Number((subTotal + vatAmt).toFixed(2));
             const payableAmount  = Number((parseFloat(service_price) / 100).toFixed(2));
             const couponDiscount = coupon_code
@@ -614,7 +500,7 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
         SELECT 
             booking_id, rescheduled_booking, rider_id, rsa_id, charger_id, vehicle_id, vehicle_data, service_name, service_type, service_feature, status, user_name, country_code, contact_no, slot, slot_date, slot_time, address, pod_id, parking_number, parking_floor, payment_intent_id, address_id, area, device_name, ROUND(portable_charger_booking.service_price / 100, 2) AS service_price, package_data,
             ${formatDateTimeInQuery(['created_at', 'updated_at'])}, ${formatDateInQuery(['slot_date'])},
-            current_percent 
+            current_percent, JSON_UNQUOTE(JSON_EXTRACT(package_data, '$.package_id')) as package_id 
         FROM 
             portable_charger_booking 
         WHERE 
@@ -670,6 +556,9 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
         history[lastValue].order_status = 'RS'
     }
     const newHistory =  await makeBookingHistory(history);
+    
+    booking.hasPodBookingPackage = booking.package_id.startsWith("VC") ? 1 : 0;
+    
     return resp.json({
         message         : ["POD Booking Details Service fetched successfully!"],
         data            : booking,
@@ -846,10 +735,10 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
     const chargingFee    = parseFloat(packageData?.price || 0);
     const chargingFeeVat = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
     const packageHtml    = packageData ? `<p>Package Details:</p>
-            <p>Package Name : ${packageData.package_name}</p>
-            <p>Charging Capacity : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
-            <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
- 
+        <p>Package Name             : ${packageData.package_name}</p>
+        <p>Charging Capacity        : ${parseFloat(packageData.charging_capacity || 0)} kWh</p>
+        <p>Charging Fee (incl. VAT) : AED ${chargingFeeVat}</p>` : '';
+
     if(checkOrder.rsa_id ||  checkOrder.rsa_id!=null) {
         await db.execute(`DELETE FROM portable_charger_booking_assign WHERE order_id=? AND rider_id=?`, [booking_id, rider_id]);
         pushNotification(checkOrder.rsa_fcm_token, title, message, 'RSAFCM', href); 
@@ -870,8 +759,10 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
         </html>`;
         // emailQueue.addEmail(checkOrder.rsa_email, `Portable Charger Service Booking Cancellation (Booking ID: ${booking_id} ) `, RSAhtml); 
         emailQueue.addEmail(checkOrder.rsa_email, `Mobile & Portable EV Charging Service Booking Cancellation (Booking ID: ${booking_id} ) `, RSAhtml);
-     }
-    const html = `<html>
+    }
+
+    let userCancelSubject = `PlusX Electric App: Booking Cancellation`;
+    let html = `<html>
         <body>
             <h4>Dear ${checkOrder.user_name},</h4>
             <p>We would like to inform you that your booking for the mobile & portable EV charging service has been successfully cancelled. Below are the details of your cancelled booking:</p>
@@ -882,7 +773,22 @@ export const userCancelPCBooking = asyncHandler(async (req, resp) => {
             <p>Best regards,<br/>PlusX Electric Team </p>
         </body>
     </html>`;
-    emailQueue.addEmail(checkOrder.rider_email, `PlusX Electric App: Booking Cancellation`, html);
+
+    const package_id = packageData?.package_id || "";
+    if ( package_id.startsWith("VC") ) {
+        html = `<html>
+            <body>
+                <h4>Dear ${checkOrder.user_name},</h4>
+                <p>Your booking with PlusX Electric has been successfully cancelled.</p>
+                <p>We would like to inform you that the charging session has been credited back to your package and is available for future bookings.</p>
+                <p>You can use this session to book a charging service anytime within your package's validity period through the PlusX Electric app.</p>
+                <p>Need assistance? Our team is always happy to help. Contact us via WhatsApp or call +971 54 279 6424.</p>
+                <p>Best regards,<br/>PlusX Electric Team </p>
+            </body>
+        </html>`;
+        userCancelSubject = `Booking Cancelled - Charging Session Credited Back`;
+    }
+    emailQueue.addEmail(checkOrder.rider_email, userCancelSubject, html);
     const adminHtml = `<html>
         <body>
             <h4>Dear Admin,</h4>
@@ -1186,3 +1092,182 @@ const makeBookingHistory = async (history) => {
     updatedList     = updatedList.filter( item => !(item.order_status === 'RS' && item.status === 0) );
     return updatedList; 
 }
+
+export const packageBookingList = asyncHandler(async (req, resp) => {
+    const { rider_id, rider_mobile, page_no = 1, limit = 10 } = mergeParam(req);
+    const { isValid, errors } = validateFields(mergeParam(req), {
+        rider_id      : ["required"],
+        rider_mobile  : ["required"],
+    });
+    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
+
+    const [packagedata] = await db.execute(`
+        SELECT customer_id
+        FROM vendor_customers
+        WHERE mobile_number = ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_mobile ]
+    );
+    if(packagedata.length == 0) {
+        return resp.json({
+            message  : ["Package Booking List fetched successfully!"],
+            data     : [], total_page : 0, status : 1, code : 200,
+            pod_base_url : `${process.env.DIR_UPLOADS}portable-charger/`,
+            rsa_base_url : `${process.env.DIR_UPLOADS}road-assistance/`,
+            noResultMsg  : "There are no recent bookings. Please schedule your booking now.",
+        });
+    }
+    const customerIds  = packagedata .map(row => String(row.customer_id)) .filter(Boolean);
+    const placeholders = customerIds.map(() => "?").join(", ");
+
+    const whereCondition = ` rider_id = ? AND status IN (?, ?, ?)
+        AND JSON_UNQUOTE( JSON_EXTRACT(package_data, '$.package_id') ) IN (${placeholders})
+    `;
+    const whereConditionRSA = ` rider_id = ? AND order_status IN (?, ?, ?)
+        AND JSON_UNQUOTE( JSON_EXTRACT(package_data, '$.customer_id') ) IN (${placeholders})
+    `;
+    const statusParams = ["RO", "PU", "CC"];
+    const podParams    = [ rider_id, ...statusParams, ...customerIds, ];
+    const rsaParams    = [ rider_id, ...statusParams, ...customerIds, ];
+
+    const page      = Math.max(1, parseInt(page_no, 10) || 1);
+    const pageLimit = Math.max(1, parseInt(limit, 10) || 10);
+    const offset    = (page - 1) * pageLimit;
+
+    const [bookingList] = await db.query(`
+        SELECT *
+        FROM (
+            SELECT
+                booking_id,
+                rescheduled_booking,
+                service_name,
+                user_name,
+                country_code,
+                contact_no,
+                service_type,
+                'POD' AS booking_type,
+                ROUND(portable_charger_booking.service_price / 100, 2) AS service_price,
+                slot_time,
+                status,
+                ${formatDateTimeInQuery(["created_at"])},
+                ${formatDateInQuery(["slot_date"])}
+            FROM portable_charger_booking
+            WHERE ${whereCondition}
+
+        UNION ALL
+
+            SELECT
+                request_id AS booking_id,
+                NULL AS rescheduled_booking,
+                'Road Assistance' AS service_name,
+                name AS user_name,
+                country_code,
+                contact_no,
+                NULL AS service_type,
+                'RSA' AS booking_type,
+                ROUND(road_assistance.price / 100, 2) AS service_price,
+                NULL AS slot_time,
+                order_status AS status,
+                ${formatDateTimeInQuery(["created_at"])},
+                NULL AS slot_date
+            FROM road_assistance
+            WHERE ${whereConditionRSA}
+        ) AS combined
+        ORDER BY combined.created_at DESC
+        LIMIT ? OFFSET ? `, [ ...podParams, ...rsaParams, pageLimit, offset, ]
+    );
+
+    // Count POD and RSA bookings for pagination.
+    const [countResult] = await db.execute(
+        `
+        SELECT COALESCE(SUM(cnt), 0) AS total
+        FROM (
+            SELECT COUNT(*) AS cnt
+            FROM portable_charger_booking
+            WHERE ${whereCondition}
+
+            UNION ALL
+
+            SELECT COUNT(*) AS cnt
+            FROM road_assistance
+            WHERE ${whereConditionRSA}
+        ) AS total_counts
+        `,
+        [ ...podParams, ...rsaParams, ]
+    );
+
+    const total = Number(countResult[0]?.total || 0);
+    const totalPages = Math.ceil(total / pageLimit);
+    
+    const [packageList] = await db.execute(`
+        SELECT 
+            vc.pod_charging_session_number, vc.pod_charging_session_validity,
+            vc.rsa_charging_session_number, vc.rsa_charging_session_validity,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.package_id')) as package_id,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.charging_capacity')) as charging_capacity,
+            (
+                SELECT count(*)
+                FROM portable_charger_booking as pcb
+                WHERE DATE(pcb.created_at) >= purchase_date AND DATE(pcb.created_at) <= pod_charging_session_validity AND pcb.status NOT IN ('C')
+                AND JSON_UNQUOTE(JSON_EXTRACT(pcb.package_data, '$.package_id')) = vc.customer_id
+                AND pcb.rider_id = ? 
+            ) as sessionBooking,
+            (
+                SELECT count(*)
+                FROM road_assistance as rs
+                WHERE DATE(rs.created_at) >= vc.purchase_date AND DATE(rs.created_at) <= vc.rsa_charging_session_validity AND rs.order_status NOT IN ('C')
+                AND rs.rider_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(rs.package_data, '$.customer_id')) = vc.customer_id
+            ) as rsaSessionBooking
+        FROM vendor_customers vc
+        WHERE vc.mobile_number = ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile ]
+    );
+
+    const chargingPackageData = [];
+    for (const packageObj of packageList) {
+
+        if( packageObj.pod_charging_session_number ) { 
+
+            const sessionBooking    = packageObj.sessionBooking;
+            const allotedSession    = packageObj.pod_charging_session_number;
+            const remainingSessions = allotedSession - sessionBooking;
+             
+            chargingPackageData.push({
+                charging_package_name       : 'Mobile EV Charging',
+                sessions_validity           : packageObj.pod_charging_session_validity,
+                total_charging_sessions     : allotedSession,
+                used_charging_sessions      : sessionBooking,
+                remaining_charging_sessions : remainingSessions,
+                package_id                  : packageObj.package_id,
+                charging_capacity           : packageObj.charging_capacity,
+            });
+        }
+        if( packageObj.rsa_charging_session_number ) { 
+
+            const sessionBooking    = packageObj.rsaSessionBooking;
+            const allotedSession    = packageObj.rsa_charging_session_number;
+            const remainingSessions = allotedSession - sessionBooking;
+            
+            chargingPackageData.push({
+                charging_package_name       : 'Roadside Assistance Service',
+                sessions_validity           : packageObj.rsa_charging_session_validity,
+                total_charging_sessions     : allotedSession,
+                used_charging_sessions      : sessionBooking,
+                remaining_charging_sessions : remainingSessions,
+                package_id                  : "",
+                charging_capacity           : 0,
+            });
+        }
+    }
+
+    return resp.json({
+        message      : ["Package Booking List fetched successfully!"],
+        data         : bookingList,
+        total_page   : totalPages,
+        packageList  : chargingPackageData,
+        status       : 1,
+        code         : 200,
+        pod_base_url : `${process.env.DIR_UPLOADS}portable-charger/`,
+        rsa_base_url : `${process.env.DIR_UPLOADS}road-assistance/`,
+        noResultMsg  : "There are no recent bookings. Please schedule your booking now.",
+    });
+});

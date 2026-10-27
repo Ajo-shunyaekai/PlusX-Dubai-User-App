@@ -1186,7 +1186,7 @@ export const home = asyncHandler(async (req, resp) => {
         podBookingData.eta_time = "11 Min.";
     }
 
-    
+    const curr_date   = moment().utcOffset(4).format('YYYY-MM-DD');
     const packagedata = await queryDB(`
         SELECT 
             vc.customer_id, vc.pod_charging_session_number, vc.pod_charging_session_validity,
@@ -1206,9 +1206,9 @@ export const home = asyncHandler(async (req, resp) => {
                 AND rs.rider_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(rs.package_data, '$.customer_id')) = vc.customer_id
             ) as rsaSessionBooking
         FROM vendor_customers vc
-        WHERE vc.mobile_number = ?
-        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile ]
-    );
+        WHERE vc.mobile_number = ? AND pod_charging_session_validity >= ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile, curr_date ]
+    ); //isme validity ka v lagana hai 
     const chargingPackageData = [];
     if(packagedata) {
         if(packagedata.pod_charging_session_number) { 

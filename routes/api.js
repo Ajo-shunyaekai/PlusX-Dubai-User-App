@@ -25,7 +25,7 @@ import { addRoadAssistance, roadAssistanceList, roadAssistanceDetail, roadAssist
 
 import {vehicleList, vehicleDetail, areaList, vehicleModelList, vehicleBrandList, dubaiAreaList } from '../controller/api/VehicleController.js';
 
-import { chargerList, packageList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
+import { chargerList, packageList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails, packageBookingList } from '../controller/api/PortableChargerController.js';
 
 import { getChargingServiceSlotList, requestService, listServices, getServiceOrderDetail, getInvoiceDetail, cancelValetBooking, userFeedbackValetBooking, rescheduleService, getChargingServiceDateList
 } from '../controller/api/ChargingServiceController.js';
@@ -167,6 +167,7 @@ const authzAndAuthRoutes = [
     { method: 'post', path: '/feedback-portable-charger-booking', handler: userFeedbackPCBooking },
     { method: 'get',  path: '/portable-charger-slot-date-list',     handler: getPcSlotDateList },
     { method: 'get',  path: '/portable-charger-invoice',            handler: podInvoiceDetails },
+    { method: 'get',  path: '/package-pod-booking-list',            handler: packageBookingList },
 
     /* Offer Routes */
     { method: 'get', path: '/offer-list',   handler: offerList },

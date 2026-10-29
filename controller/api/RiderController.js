@@ -454,82 +454,6 @@ export const createOTP = asyncHandler(async (req, resp) => {
     }
 });
 
-export const verifyOTPOld = asyncHandler(async (req, resp) => {
-    const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
-    
-    const { isValid, errors } = validateFields(mergeParam(req), { 
-        mobile       : ["required"], 
-        country_code : ["required"], 
-        fcm_token    : ["required"], 
-        otp          : ["required"] 
-    });
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    // is_resident > 0 when mapped to any community (multi-community aware)
-    const riderData = await queryDB(`
-        SELECT
-            rider_id, rider_name, last_name, rider_email, profile_img, country, emirates, status,
-            ( SELECT CASE
-                WHEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? ) > 0
-                THEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? )
-                WHEN EXISTS ( SELECT 1 FROM community_resident WHERE resident_mobile = ? )
-                THEN 1
-                ELSE 0
-              END
-            ) AS resident_count
-        FROM riders
-        WHERE rider_mobile = ? AND country_code = ?
-        LIMIT 1`, [mobile, mobile, mobile, mobile, country_code]
-    );
-
-    if(!riderData) return resp.json({ 
-        status  : 0, code: 422, 
-        message : ["The mobile number is not registered with us. Kindly sign up."] 
-    });
-    if(riderData.status == 2){
-        return resp.json({status: 1, code: 422, message: ["You can not login as your status is inactive. Kindly contact to customer care"]});
-    }
-    const fullMobile = `${country_code}${mobile}`;
-    const cachedOtp  = getOTP(fullMobile);
-    
-    if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
-
-    const token    = crypto.randomBytes(12).toString('hex');
-    const platform = resolveAppPlatform(added_from);
-    await db.execute(
-        `UPDATE riders
-         SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
-             added_from = CASE
-                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community' ) THEN ?
-                 ELSE added_from
-             END
-         WHERE rider_mobile = ? AND country_code = ?`,
-        [token, fcm_token, device_name, platform, mobile, country_code]
-    );
-
-    delOTP(fullMobile);
-    let respResult = {
-        image_url     : `${process.env.DIR_UPLOADS}rider_profile/`,
-        rider_id      : riderData.rider_id,
-        rider_name    : riderData.rider_name,
-        last_name     : riderData.last_name,
-        rider_email   : riderData.rider_email,
-        profile_img   : riderData.profile_img,
-        rider_mobile  : mobile,
-        country_code  : country_code,        
-        emirates      : riderData.emirates,
-        access_token  : token,
-        is_resident   : riderData.resident_count,
-    };
-    return resp.json({message: [ "Login successful!" ], status: 1, code: 200, is_login: 1, result: respResult});
-});
-
 export const verifyOTP = asyncHandler(async (req, resp) => {
     const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
     
@@ -699,121 +623,6 @@ export const updatePassword = asyncHandler(async (req, resp) => {
 });
 
 /* Rider Info */
-export const homeOld = asyncHandler(async (req, resp) => {
-    const {rider_id} = mergeParam(req);
-    if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
-    
-    const riderQuery = `SELECT rider_id, rider_name,
-        (SELECT COUNT(*) FROM notifications AS n WHERE n.panel_to = 'Rider' AND n.receive_id = rider_id AND status = '0') AS notification_count,
-        ( SELECT CASE
-            WHEN ( SELECT COUNT(DISTINCT crm.community_id)
-                   FROM community_resident cr
-                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                   WHERE cr.resident_mobile = riders.rider_mobile ) > 0
-            THEN ( SELECT COUNT(DISTINCT crm.community_id)
-                   FROM community_resident cr
-                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                   WHERE cr.resident_mobile = riders.rider_mobile )
-            WHEN EXISTS ( SELECT 1 FROM community_resident cr2 WHERE cr2.resident_mobile = riders.rider_mobile )
-            THEN 1
-            ELSE 0
-          END
-        ) AS resident_count,
-        (SELECT COUNT(*) FROM purchase_history AS pu WHERE pu.customer_mobile = riders.rider_mobile ) AS purchase_history_count,
-        (SELECT COUNT(*) FROM charge_share AS cs WHERE cs.rider_id = ? AND cs.charger_status = 1) AS charge_share_count
-        FROM riders WHERE rider_id = ?
-    `;
-    const riderData = await queryDB(riderQuery, [rider_id, rider_id]);
-
-    if (!riderData) {
-        return resp.status(404).json({ message: "Rider not found", status: 0 });
-    }
-    const result = {
-        rider_id               : riderData.rider_id,
-        rider_name             : riderData.rider_name,
-        notification_count     : riderData.notification_count,
-        is_resident            : riderData.resident_count,
-        purchase_history_count : riderData.purchase_history_count,
-        charge_share_count     : riderData.charge_share_count
-    };
-    const orderData = await queryDB(
-        `SELECT request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = road_assistance.rsa_id) AS rsaDetails, created_at 
-        FROM road_assistance 
-        WHERE rider_id = ? AND order_status NOT IN ('PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC') 
-        ORDER BY id DESC LIMIT 1 `, [rider_id]
-    );
-    if (orderData) orderData.eta_time = '12 Min.';
-    
-    const pickDropData = await queryDB(
-        `SELECT request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = charging_service.rsa_id) AS rsaDetails, created_at 
-        FROM charging_service 
-        WHERE rider_id = ? AND order_status NOT IN ('CNF', 'A', 'WC', 'C', 'PNR', 'DO') 
-        ORDER BY id DESC LIMIT 1 `, [rider_id]
-    );
-    
-    if (pickDropData) pickDropData.eta_time = '11 Min.';
-    
-    const podBookingData = await queryDB(
-        `SELECT booking_id AS request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = portable_charger_booking.rsa_id) AS rsaDetails, created_at 
-        FROM portable_charger_booking 
-        WHERE rider_id = ? AND status NOT IN ('PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC') 
-        ORDER BY id DESC LIMIT 1
-    `, [rider_id]);
-
-    if (podBookingData) podBookingData.eta_time = '11 Min.';
-    
-    const currDate = moment().utcOffset(4).format('dddd');
-    const currTime = moment().utcOffset(4).format('HH:mm:ss');
-    const priceQry  = `
-        SELECT 
-            portable_price, portable_original_price, pick_drop_price, 
-            ( SELECT slot_price FROM road_assistance_slot WHERE status = 1 AND slot_date = "${currDate}" AND "${currTime}" BETWEEN start_time AND end_time order by start_time asc limit 1 ) as slot_price 
-        FROM booking_price 
-        LIMIT 1`;
-    const priceData = await queryDB(priceQry, []);
-    const scanChargingData = await scanChargingDetail(rider_id) ;
-
-    const portablePrice = priceData.portable_price;
-    const portableOriginalPrice = priceData.portable_original_price ?? null;
-    const portableDiscountAmount =
-        portableOriginalPrice != null && Number(portableOriginalPrice) > Number(portablePrice)
-            ? Number((Number(portableOriginalPrice) - Number(portablePrice)).toFixed(2))
-            : null;
-
-    const chargingPackageData = [
-        {
-            charging_package_name: 'Mobile & Portable\nEV Charging',
-            sessions_validity: "2027-01-12",
-            total_charging_sessions: 60,
-            used_charging_sessions: 12,
-            remaining_charging_sessions: 48,
-        }, {
-            charging_package_name: 'EV Roadside\nAssistance',
-            sessions_validity: "2027-01-12",
-            total_charging_sessions: 10,
-            used_charging_sessions: 2,
-            remaining_charging_sessions: 8,
-        },
-    ];
-
-    return resp.json({
-        message                   : ["Rider Home Data fetched successfully!"],
-        rider_data                : result,
-        order_data                : orderData || null,
-        pick_drop_order           : pickDropData || null,
-        pod_booking               : podBookingData || null,
-        roadside_assistance_price : priceData.slot_price || 0,
-        portable_price            : portablePrice,
-        portable_original_price   : portableOriginalPrice, // striked display price
-        portable_discount_amount  : portableDiscountAmount, // discount amount
-        pick_drop_price           : priceData.pick_drop_price,
-        status                    : 1,
-        code                      : 200,
-        scanChargingData,
-        chargingPackageData
-    });
-});
-
 export const home = asyncHandler(async (req, resp) => {
     const {rider_id} = mergeParam(req);
     if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
@@ -941,13 +750,13 @@ export const home = asyncHandler(async (req, resp) => {
     if (podBookingData) {
         podBookingData.eta_time = "11 Min.";
     }
-
-    
+    const curr_date   = moment().utcOffset(4).format('YYYY-MM-DD');
     const packagedata = await queryDB(`
         SELECT 
             vc.customer_id, vc.pod_charging_session_number, vc.pod_charging_session_validity,
-            vc.rsa_charging_session_number, vc.rsa_charging_session_validity,
-            vc.package_data, vc.purchase_date,
+            vc.rsa_charging_session_number, vc.rsa_charging_session_validity, vc.purchase_date,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.package_id')) as package_id,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.charging_capacity')) as charging_capacity, 
             (
                 SELECT count(*)
                 FROM portable_charger_booking as pcb
@@ -962,8 +771,8 @@ export const home = asyncHandler(async (req, resp) => {
                 AND rs.rider_id = ? AND JSON_UNQUOTE(JSON_EXTRACT(rs.package_data, '$.customer_id')) = vc.customer_id
             ) as rsaSessionBooking
         FROM vendor_customers vc
-        WHERE vc.mobile_number = ?
-        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile ]
+        WHERE vc.mobile_number = ? AND pod_charging_session_validity >= ?
+        ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile, curr_date ]
     );
     const chargingPackageData = [];
     if(packagedata) {
@@ -980,8 +789,8 @@ export const home = asyncHandler(async (req, resp) => {
                     total_charging_sessions     : allotedSession,
                     used_charging_sessions      : sessionBooking,
                     remaining_charging_sessions : remainingSessions,
-                    package_id                  : packagedata.package_data.package_id,
-                    charging_capacity           : packagedata.package_data.charging_capacity
+                    package_id                  : packagedata?.package_id || "",
+                    charging_capacity           : packagedata?.charging_capacity || ""
                 });
             }
         }

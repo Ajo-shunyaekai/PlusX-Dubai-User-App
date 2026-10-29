@@ -6,7 +6,7 @@ import emailQueue from "../../emailQueue.js";
 import validateFields from "../../validation.js";
 import { queryDB, getPaginatedData, insertRecord, updateRecord } from '../../dbUtils.js';
 import db from "../../config/db.js";
-import { asyncHandler, createNotification, formatDateInQuery, formatDateTimeInQuery, mergeParam, pushNotification, checkCoupon } from "../../utils.js";
+import { asyncHandler, createNotification, formatDateInQuery, formatDateTimeInQuery, mergeParam, pushNotification, checkCoupon, termsForNewBooking, getStoredTerms } from "../../utils.js";
 dotenv.config();
 import { tryCatchErrorHandler } from "../../middleware/errorHandler.js";
 import { io } from '../../server.js';
@@ -394,10 +394,11 @@ export const chargerBooking = asyncHandler(async (req, resp) => {
                 payable_amount   : payableAmount,
             };
 
+            const { termsVersionId, termsAcceptedAt } = await termsForNewBooking('portable-charger');
             const insert = await insertRecord('portable_charger_booking', [
-                'booking_id', 'rider_id', 'vehicle_id', 'service_name', 'service_price', 'service_type', 'service_feature', 'user_name', 'country_code', 'contact_no', 'slot', 'slot_date', 'slot_time', 'address', 'latitude', 'longitude', 'status', 'address_alert', 'parking_number', 'parking_floor', 'address_id', 'device_name', 'area', 'vehicle_data', 'current_percent', 'booking_price', 'package_data'
+                'booking_id', 'rider_id', 'vehicle_id', 'service_name', 'service_price', 'service_type', 'service_feature', 'user_name', 'country_code', 'contact_no', 'slot', 'slot_date', 'slot_time', 'address', 'latitude', 'longitude', 'status', 'address_alert', 'parking_number', 'parking_floor', 'address_id', 'device_name', 'area', 'vehicle_data', 'current_percent', 'booking_price', 'package_data', 'terms_version_id', 'terms_accepted_at'
             ], [
-                'PCB', rider_id, vehicle_id, service_name, service_price, service_type, service_feature, user_name, country_code, contact_no, slot_id, fSlotDate, slot_time, address, latitude, longitude, 'PNR', addressAlert, parking_number, parking_floor, address_id, device_name, area, vehicle_data, battery_percent, booking_price, JSON.stringify(packageDetails)
+                'PCB', rider_id, vehicle_id, service_name, service_price, service_type, service_feature, user_name, country_code, contact_no, slot_id, fSlotDate, slot_time, address, latitude, longitude, 'PNR', addressAlert, parking_number, parking_floor, address_id, device_name, area, vehicle_data, battery_percent, booking_price, JSON.stringify(packageDetails), termsVersionId, termsAcceptedAt
             ]); 
             if(insert.affectedRows == 0) {
                return resp.json({status:0, code:200, message: ["Oops! Something went wrong. Please try again."]});
@@ -499,8 +500,8 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
     const bookingWithNull = await queryDB(`
         SELECT 
             booking_id, rescheduled_booking, rider_id, rsa_id, charger_id, vehicle_id, vehicle_data, service_name, service_type, service_feature, status, user_name, country_code, contact_no, slot, slot_date, slot_time, address, pod_id, parking_number, parking_floor, payment_intent_id, address_id, area, device_name, ROUND(portable_charger_booking.service_price / 100, 2) AS service_price, package_data,
-            ${formatDateTimeInQuery(['created_at', 'updated_at'])}, ${formatDateInQuery(['slot_date'])},
-            current_percent, JSON_UNQUOTE(JSON_EXTRACT(package_data, '$.package_id')) as package_id 
+            ${formatDateTimeInQuery(['created_at', 'updated_at', 'terms_accepted_at'])}, ${formatDateInQuery(['slot_date'])},
+            current_percent, JSON_UNQUOTE(JSON_EXTRACT(package_data, '$.package_id')) as package_id, terms_version_id 
         FROM 
             portable_charger_booking 
         WHERE 
@@ -509,6 +510,10 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
     [rider_id, booking_id]);
 
     if(!bookingWithNull) return resp.json({ status: 0, code: 404, message: ["There are no booking available for the provided booking ID."] });
+    const termsVersionId = bookingWithNull.terms_version_id;
+    const termsAcceptedAt = bookingWithNull.terms_accepted_at;
+    delete bookingWithNull.terms_version_id;
+    delete bookingWithNull.terms_accepted_at;
     const { package_data: rawPackageData, ...bookingFields } = bookingWithNull;
     const booking = Object.fromEntries(
         Object.entries(bookingFields).map(([key, value]) => [
@@ -558,7 +563,8 @@ export const chargerBookingDetail = asyncHandler(async (req, resp) => {
     const newHistory =  await makeBookingHistory(history);
     
     booking.hasPodBookingPackage = booking.package_id.startsWith("VC") ? 1 : 0;
-    
+    booking.terms = await getStoredTerms(termsVersionId, termsAcceptedAt);
+
     return resp.json({
         message         : ["POD Booking Details Service fetched successfully!"],
         data            : booking,

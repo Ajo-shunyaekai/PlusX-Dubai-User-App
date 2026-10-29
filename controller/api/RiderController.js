@@ -192,85 +192,6 @@ export const login = asyncHandler(async (req, resp) => {
     }
 });
 
-export const register1 = asyncHandler(async (req, resp) => {
-    const { 
-        first_name, last_name, rider_email, country_code, rider_mobile, emirates, added_from, otp, fcm_token =""  
-    } = mergeParam(req);
-    
-    let validationRules = {
-        first_name   : ["required"],
-        last_name    : ["required"],
-        rider_email  : ["required", "email"],
-        country_code : ["required"],
-        rider_mobile : ["required"],
-        emirates     : ["required"],
-        otp          : ["required"],
-        // fcm_token    : ["required"],
-    };
-    const { isValid, errors } = validateFields(mergeParam(req), validationRules);
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    const res = checkNumber(country_code, rider_mobile);
-    if(res.status == 0) return resp.json({ status : 0, code : 422, message : res.msg });
-
-    const fullMobile = `${country_code}${rider_mobile}`;
-    const cachedOtp  = getOTP(fullMobile);
-    if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
-
-    const rider = await insertRecord('riders', 
-    [
-        'rider_id', 'rider_name', 'last_name', 'rider_email', 'country_code', 'rider_mobile', 'emirates', 'status', 'added_from' 
-    ],[ 
-        'ER', first_name, last_name, rider_email, country_code, rider_mobile, emirates, 
-        0, added_from || 'Android' 
-    ]);
-    if(!rider) return resp.json({status:0, code:405, message: ["Failed to register. Please Try Again"], error: true}); 
-
-    const riderId = 'ER' + String(rider.insertId).padStart(4, '0');
-    const token   = crypto.randomBytes(12).toString('hex');
-    const updtObj = {
-        rider_id     : riderId,
-        access_token : token, 
-        status       : 1, 
-        fcm_token    : fcm_token
-    }
-    await updateRecord('riders', updtObj, ['id'], [ rider.insertId ]);
-
-    // Link admin-created offline RSA bookings to this rider when mobile_no matches rider_mobile
-    await linkOfflineRsaToRider(riderId, rider_mobile);
-    // Link admin-created charger installation inquiries (fail-soft: never block registration)
-    try {
-        await linkChargerInstallationInquiryToRider(riderId, rider_mobile);
-    } catch (linkErr) {
-        console.error('[register] charger installation inquiry link skipped:', linkErr.message);
-    }
-
-    delOTP(fullMobile);
-
-    // Resident if community_resident row exists (map may be populated by admin after signup)
-    const rsidentData = await queryDB(`
-        SELECT resident_name
-        FROM community_resident
-        WHERE resident_mobile = ?`,
-        [ rider_mobile ]
-    );
-
-    const result = {
-        image_url    : `${process.env.DIR_UPLOADS}rider_profile/`,
-        rider_id     : riderId,
-        rider_name   : first_name,
-        last_name    : last_name,
-        rider_email  : rider_email,
-        profile_img  : null,
-        country_code : country_code,
-        rider_mobile : rider_mobile,
-        emirates     : emirates,
-        access_token : token,
-        is_resident  : !rsidentData ? 0 : 1,
-    };
-    return resp.json({ status : 1, code : 200, message : ["Rider registered successfully"], result : result});
-});
-
 export const register = asyncHandler(async (req, resp) => {
     console.log('register called')
     const { 
@@ -396,49 +317,6 @@ export const register = asyncHandler(async (req, resp) => {
     return resp.json({ status : 1, code : 200, message : ["Rider registered successfully"], result : result});
 });
 
-export const regsCreateOTP1 = asyncHandler(async (req, resp) => {
-    const { mobile, country_code, rider_email } = mergeParam(req);
-    const { isValid, errors } = validateFields(mergeParam(req), {
-        mobile       : ["required"], 
-        country_code : ["required"],
-        rider_email  : ["required"]
-    });
-    if (!isValid) return resp.json({ status : 0, code : 422, message : errors });
-
-    const res = checkNumber(country_code, mobile);
-    if(res.status == 0) return resp.json({ status : 0, code : 422, message : res.msg });
-
-    const fullMobile = `${country_code}${mobile}`;
-    const [[isExist]] = await db.execute(`
-        SELECT rider_mobile, 
-            (SELECT COUNT(*) FROM riders AS r WHERE r.rider_email = ?) AS check_email,
-            (SELECT COUNT(*) FROM riders AS r1 WHERE r1.rider_mobile = ?) AS check_mob,
-            (SELECT COUNT(*) FROM rsa WHERE rsa.mobile = ? ) AS rsa_mob
-        FROM 
-            riders
-        LIMIT 1 `, [rider_email, mobile, fullMobile ]
-    );
-    if(isExist.check_mob > 0 || isExist.rsa_mob > 0 ) return resp.json({ status:0, code:422, message: ['The provided number already exists.'] });
-
-    if(isExist.check_email > 0 ) return resp.json({ status : 0, code : 422, message : ['Email already registered.'] });
-
-    const otp = generateOTP(4);
-    storeOTP(fullMobile, otp);
-    return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //for testing server 
-
-    // sendOtp( fullMobile,
-    //     `Your One-Time Password (OTP) for sign-up is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
-    // )
-    // .then(result => {
-    //     if (result.status === 0) return resp.json(result);
-    //     return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
-    // })
-    // .catch(err => {
-    //     tryCatchErrorHandler(req.originalUrl, err, resp, 'Failed to send OTP' );
-    // }); 
-    
-});
-
 export const regsCreateOTP = asyncHandler(async (req, resp) => {
     console.log('regsCreateOTP called')
     const { mobile, country_code, rider_email } = mergeParam(req);
@@ -520,52 +398,6 @@ export const regsCreateOTP = asyncHandler(async (req, resp) => {
     
 });
 
-export const createOTP1 = asyncHandler(async (req, resp) => {
-    const { mobile, country_code } = mergeParam(req);
-    const { isValid, errors } = validateFields(mergeParam(req), {
-        mobile       : ["required"], 
-        country_code : ["required"]
-    });
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    const res = checkNumber(country_code, mobile);
-    if(res.status == 0) return resp.json({ status:0, code:422, message: res.msg });
-    
-    let checkCountQuery = 'SELECT COUNT(id) AS count FROM riders WHERE rider_mobile =? AND country_code =?';
-    
-    const [rows]     = await db.execute(checkCountQuery, [mobile, country_code]);
-    const checkCount = rows[0].count;
-    
-    if (checkCount == 0) return resp.json({ status: 0, code: 422, message: ['The provided mobile number is not registered.'] });
-    
-    const fullMobile = `${country_code}${mobile}`;
-    let otp          = ( mobile == 508509508 || mobile == '508509508') ? "2404" : generateOTP(4);
-        otp          = ( mobile == 509508509 || mobile == '509508509') ? "2207" : otp;
-
-    storeOTP(fullMobile, otp);
-    return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //this is for testing server
-
-    // if( mobile == 508509508 || mobile == '508509508') {
-    //     return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
-        
-    // } else if( mobile == 509508509 || mobile == '509508509') {
-    //     return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
-        
-    // } else {
-    //     sendOtp( fullMobile,
-    //         `Your One-Time Password (OTP) for sign-in is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
-    //     )
-    //     .then(result => {
-    //         if (result.status === 0) return resp.json(result);
-    //         return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
-    //     })
-    //     .catch(err => {
-    //         console.error('Error in otpController:', err.message);
-    //         return resp.json({ status: 'error', msg: 'Failed to send OTP' });
-    //     }); 
-    // }
-});
-
 export const createOTP = asyncHandler(async (req, resp) => {
     const { mobile, country_code } = mergeParam(req);
     const { isValid, errors } = validateFields(mergeParam(req), {
@@ -620,158 +452,6 @@ export const createOTP = asyncHandler(async (req, resp) => {
     //         return resp.json({ status: 'error', msg: 'Failed to send OTP' });
     //     }); 
     // }
-});
-
-export const verifyOTPOld = asyncHandler(async (req, resp) => {
-    const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
-    
-    const { isValid, errors } = validateFields(mergeParam(req), { 
-        mobile       : ["required"], 
-        country_code : ["required"], 
-        fcm_token    : ["required"], 
-        otp          : ["required"] 
-    });
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    // is_resident > 0 when mapped to any community (multi-community aware)
-    const riderData = await queryDB(`
-        SELECT
-            rider_id, rider_name, last_name, rider_email, profile_img, country, emirates, status,
-            ( SELECT CASE
-                WHEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? ) > 0
-                THEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? )
-                WHEN EXISTS ( SELECT 1 FROM community_resident WHERE resident_mobile = ? )
-                THEN 1
-                ELSE 0
-              END
-            ) AS resident_count
-        FROM riders
-        WHERE rider_mobile = ? AND country_code = ?
-        LIMIT 1`, [mobile, mobile, mobile, mobile, country_code]
-    );
-
-    if(!riderData) return resp.json({ 
-        status  : 0, code: 422, 
-        message : ["The mobile number is not registered with us. Kindly sign up."] 
-    });
-    if(riderData.status == 2){
-        return resp.json({status: 1, code: 422, message: ["You can not login as your status is inactive. Kindly contact to customer care"]});
-    }
-    const fullMobile = `${country_code}${mobile}`;
-    const cachedOtp  = getOTP(fullMobile);
-    
-    if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
-
-    const token    = crypto.randomBytes(12).toString('hex');
-    const platform = resolveAppPlatform(added_from);
-    await db.execute(
-        `UPDATE riders
-         SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
-             added_from = CASE
-                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community' ) THEN ?
-                 ELSE added_from
-             END
-         WHERE rider_mobile = ? AND country_code = ?`,
-        [token, fcm_token, device_name, platform, mobile, country_code]
-    );
-
-    delOTP(fullMobile);
-    let respResult = {
-        image_url     : `${process.env.DIR_UPLOADS}rider_profile/`,
-        rider_id      : riderData.rider_id,
-        rider_name    : riderData.rider_name,
-        last_name     : riderData.last_name,
-        rider_email   : riderData.rider_email,
-        profile_img   : riderData.profile_img,
-        rider_mobile  : mobile,
-        country_code  : country_code,        
-        emirates      : riderData.emirates,
-        access_token  : token,
-        is_resident   : riderData.resident_count,
-    };
-    return resp.json({message: [ "Login successful!" ], status: 1, code: 200, is_login: 1, result: respResult});
-});
-
-export const verifyOTP1 = asyncHandler(async (req, resp) => {
-    const { mobile, country_code, fcm_token, otp, device_name ='', added_from = '' } = mergeParam(req);
-    
-    const { isValid, errors } = validateFields(mergeParam(req), { 
-        mobile       : ["required"], 
-        country_code : ["required"], 
-        fcm_token    : ["required"], 
-        otp          : ["required"] 
-    });
-    if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
-
-    // is_resident > 0 when mapped to any community (multi-community aware)
-    const riderData = await queryDB(`
-        SELECT
-            rider_id, rider_name, last_name, rider_email, profile_img, country, emirates, status,
-            ( SELECT CASE
-                WHEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? ) > 0
-                THEN ( SELECT COUNT(DISTINCT crm.community_id)
-                       FROM community_resident cr
-                       INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                       WHERE cr.resident_mobile = ? )
-                WHEN EXISTS ( SELECT 1 FROM community_resident WHERE resident_mobile = ? )
-                THEN 1
-                ELSE 0
-              END
-            ) AS resident_count
-        FROM riders
-        WHERE rider_mobile = ? AND country_code = ?
-        LIMIT 1`, [mobile, mobile, mobile, mobile, country_code]
-    );
-
-    if(!riderData) return resp.json({ 
-        status  : 0, code: 422, 
-        message : ["The mobile number is not registered with us. Kindly sign up."] 
-    });
-    if(riderData.status == 2){
-        return resp.json({status: 1, code: 422, message: ["You can not login as your status is inactive. Kindly contact to customer care"]});
-    }
-    const fullMobile = `${country_code}${mobile}`;
-    const cachedOtp  = getOTP(fullMobile);
-    
-    if (!cachedOtp || cachedOtp !== otp) return resp.json({ status: 0, code: 422, message: ["OTP invalid!"] });
-
-    const token    = crypto.randomBytes(12).toString('hex');
-    const platform = resolveAppPlatform(added_from);
-    await db.execute(
-        `UPDATE riders
-         SET access_token = ?, status = 1, fcm_token = ?, device_name = ?,
-             added_from = CASE
-                 WHEN added_from IN ('Rsa Offline', 'CI Offline', 'Admin Offline', 'Admin Offl', 'Community' ) THEN ?
-                 ELSE added_from
-             END
-         WHERE rider_mobile = ? AND country_code = ?`,
-        [token, fcm_token, device_name, platform, mobile, country_code]
-    );
-
-    delOTP(fullMobile);
-    let respResult = {
-        image_url     : `${process.env.DIR_UPLOADS}rider_profile/`,
-        rider_id      : riderData.rider_id,
-        rider_name    : riderData.rider_name,
-        last_name     : riderData.last_name,
-        rider_email   : riderData.rider_email,
-        profile_img   : riderData.profile_img,
-        rider_mobile  : mobile,
-        country_code  : country_code,        
-        emirates      : riderData.emirates,
-        access_token  : token,
-        is_resident   : riderData.resident_count,
-    };
-    return resp.json({message: [ "Login successful!" ], status: 1, code: 200, is_login: 1, result: respResult});
 });
 
 export const verifyOTP = asyncHandler(async (req, resp) => {
@@ -943,120 +623,6 @@ export const updatePassword = asyncHandler(async (req, resp) => {
 });
 
 /* Rider Info */
-export const homeOld = asyncHandler(async (req, resp) => {
-    const {rider_id} = mergeParam(req);
-    if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
-    
-    const riderQuery = `SELECT rider_id, rider_name,
-        (SELECT COUNT(*) FROM notifications AS n WHERE n.panel_to = 'Rider' AND n.receive_id = rider_id AND status = '0') AS notification_count,
-        ( SELECT CASE
-            WHEN ( SELECT COUNT(DISTINCT crm.community_id)
-                   FROM community_resident cr
-                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                   WHERE cr.resident_mobile = riders.rider_mobile ) > 0
-            THEN ( SELECT COUNT(DISTINCT crm.community_id)
-                   FROM community_resident cr
-                   INNER JOIN community_resident_map crm ON crm.resident_id = cr.resident_id
-                   WHERE cr.resident_mobile = riders.rider_mobile )
-            WHEN EXISTS ( SELECT 1 FROM community_resident cr2 WHERE cr2.resident_mobile = riders.rider_mobile )
-            THEN 1
-            ELSE 0
-          END
-        ) AS resident_count,
-        (SELECT COUNT(*) FROM purchase_history AS pu WHERE pu.customer_mobile = riders.rider_mobile ) AS purchase_history_count,
-        (SELECT COUNT(*) FROM charge_share AS cs WHERE cs.rider_id = ? AND cs.charger_status = 1) AS charge_share_count
-        FROM riders WHERE rider_id = ?
-    `;
-    const riderData = await queryDB(riderQuery, [rider_id, rider_id]);
-
-    if (!riderData) {
-        return resp.status(404).json({ message: "Rider not found", status: 0 });
-    }
-    const result = {
-        rider_id               : riderData.rider_id,
-        rider_name             : riderData.rider_name,
-        notification_count     : riderData.notification_count,
-        is_resident            : riderData.resident_count,
-        purchase_history_count : riderData.purchase_history_count,
-        charge_share_count     : riderData.charge_share_count
-    };
-    const orderData = await queryDB(
-        `SELECT request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = road_assistance.rsa_id) AS rsaDetails, created_at 
-        FROM road_assistance 
-        WHERE rider_id = ? AND order_status NOT IN ('PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC') 
-        ORDER BY id DESC LIMIT 1 `, [rider_id]
-    );
-    if (orderData) orderData.eta_time = '12 Min.';
-    
-    const pickDropData = await queryDB(
-        `SELECT request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = charging_service.rsa_id) AS rsaDetails, created_at 
-        FROM charging_service 
-        WHERE rider_id = ? AND order_status NOT IN ('CNF', 'A', 'WC', 'C', 'PNR', 'DO') 
-        ORDER BY id DESC LIMIT 1 `, [rider_id]
-    );
-    
-    if (pickDropData) pickDropData.eta_time = '11 Min.';
-    
-    const podBookingData = await queryDB(
-        `SELECT booking_id AS request_id, (SELECT CONCAT(rsa_name, ',', country_code, ' ', mobile) FROM rsa WHERE rsa_id = portable_charger_booking.rsa_id) AS rsaDetails, created_at 
-        FROM portable_charger_booking 
-        WHERE rider_id = ? AND status NOT IN ('PNR', 'CNF', 'A', 'PU', 'C', 'RO', 'CC') 
-        ORDER BY id DESC LIMIT 1
-    `, [rider_id]);
-
-    if (podBookingData) podBookingData.eta_time = '11 Min.';
-    
-    const currDate = moment().utcOffset(4).format('dddd');
-    const currTime = moment().utcOffset(4).format('HH:mm:ss');
-    const priceQry  = `
-        SELECT 
-            portable_price, portable_original_price, pick_drop_price, 
-            ( SELECT slot_price FROM road_assistance_slot WHERE status = 1 AND slot_date = "${currDate}" AND "${currTime}" BETWEEN start_time AND end_time order by start_time asc limit 1 ) as slot_price 
-        FROM booking_price 
-        LIMIT 1`;
-    const priceData = await queryDB(priceQry, []);
-    const scanChargingData = await scanChargingDetail(rider_id) ;
-
-    const portablePrice = priceData.portable_price;
-    const portableOriginalPrice = priceData.portable_original_price ?? null;
-    const portableDiscountAmount =
-        portableOriginalPrice != null && Number(portableOriginalPrice) > Number(portablePrice)
-            ? Number((Number(portableOriginalPrice) - Number(portablePrice)).toFixed(2))
-            : null;
-
-    const chargingPackageData = [
-        {
-            charging_package_name: 'Mobile & Portable\nEV Charging',
-            sessions_validity: "2027-01-12",
-            total_charging_sessions: 60,
-            used_charging_sessions: 12,
-            remaining_charging_sessions: 48,
-        }, {
-            charging_package_name: 'EV Roadside\nAssistance',
-            sessions_validity: "2027-01-12",
-            total_charging_sessions: 10,
-            used_charging_sessions: 2,
-            remaining_charging_sessions: 8,
-        },
-    ];
-
-    return resp.json({
-        message                   : ["Rider Home Data fetched successfully!"],
-        rider_data                : result,
-        order_data                : orderData || null,
-        pick_drop_order           : pickDropData || null,
-        pod_booking               : podBookingData || null,
-        roadside_assistance_price : priceData.slot_price || 0,
-        portable_price            : portablePrice,
-        portable_original_price   : portableOriginalPrice, // striked display price
-        portable_discount_amount  : portableDiscountAmount, // discount amount
-        pick_drop_price           : priceData.pick_drop_price,
-        status                    : 1,
-        code                      : 200,
-        scanChargingData,
-        chargingPackageData
-    });
-});
 
 export const home = asyncHandler(async (req, resp) => {
     const {rider_id} = mergeParam(req);
@@ -1185,7 +751,6 @@ export const home = asyncHandler(async (req, resp) => {
     if (podBookingData) {
         podBookingData.eta_time = "11 Min.";
     }
-
     const curr_date   = moment().utcOffset(4).format('YYYY-MM-DD');
     const packagedata = await queryDB(`
         SELECT 
@@ -1208,7 +773,7 @@ export const home = asyncHandler(async (req, resp) => {
         FROM vendor_customers vc
         WHERE vc.mobile_number = ? AND pod_charging_session_validity >= ?
         ORDER BY id DESC LIMIT 1 `, [ rider_id, rider_id, rider_mobile, curr_date ]
-    ); //isme validity ka v lagana hai 
+    );
     const chargingPackageData = [];
     if(packagedata) {
         if(packagedata.pod_charging_session_number) { 

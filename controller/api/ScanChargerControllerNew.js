@@ -33,7 +33,7 @@
  *   Query: rider_id (required), invoice_id (required)
  */
 
-import { mergeParam, formatDateTimeInQuery } from "../../utils.js";
+import { mergeParam, formatDateTimeInQuery, createNotification, pushNotification } from "../../utils.js";
 import validateFields from "../../validation.js";
 import { insertRecord, queryDB, updateRecord } from '../../dbUtils.js';
 import db from "../../config/db.js";
@@ -135,7 +135,7 @@ export const chargingStart = async (req, resp) => {
             SELECT
                 cr.resident_id, cr.resident_name, cr.resident_mobile, cr.resident_email, cr.address,
                 cr.monthly_session_allocation, cr.alloted_time, cr.kwh_allocated, cr.per_kwh_charge,
-                cr.extra_charge, r.rider_mobile, cl.community_id, cl.community_name, cl.area_name
+                cr.extra_charge, r.rider_mobile, cl.community_id, cl.community_name, cl.area_name, r.fcm_token
             FROM community_chargers AS cm
             INNER JOIN community_list AS cl ON cl.community_id = cm.community_id
             LEFT JOIN riders AS r ON r.rider_id = ?
@@ -234,6 +234,12 @@ export const chargingStart = async (req, resp) => {
         const booking_id = 'SCB' + String(insert.insertId).padStart(4, '0');
         await updateRecord('scan_charger_booking', { booking_id }, ['id'], [insert.insertId]);
 
+        const href    = 'community_charger_booking/' + booking_id;
+        const heading = 'Charging in Progress ';
+        const desc    = `Your vehicle is currently charging. Please keep an eye on your charging session.`;
+        createNotification(heading, desc, 'Community Charging Booking', 'Rider', 'Admin','', rider_id, href);
+        pushNotification(chargeData.fcm_token, heading, desc, 'RDRFCM', href);
+
         client.publish(`/supro/EVONE/${charger_id}/DL/RL`, "ON", { qos: 0, retain: false });
 
         setTimeout(() => {
@@ -307,9 +313,10 @@ export const stopCharge = async (req, resp) => {
         if (!isValid) return resp.json({ status: 0, code: 422, message: errors });
 
         const chargingData = await queryDB(`
-            SELECT charger_id, start_time, start_kwh, resident_data
+            SELECT charger_id, start_time, start_kwh, resident_data, rd.fcm_token
             FROM scan_charger_booking
             WHERE booking_id = ? AND rider_id = ? AND status = ?
+            LEFT JOIN riders AS rd ON rd.rider_id = scan_charger_booking.rider_id
             LIMIT 1`, [booking_id, rider_id, "S"]
         );
         if (!chargingData) {
@@ -343,6 +350,13 @@ export const stopCharge = async (req, resp) => {
         if (insert.affectedRows == 0) {
             return resp.json({ status: 0, message: "Failed to Stop Charge! Please try again after some time." });
         }
+
+        const href    = 'community_charger_booking/' + booking_id;
+        const heading = 'Charging Session Completed';
+        const desc    = `Your charging session has been successfully completed.`;
+        createNotification(heading, desc, 'Community Charging Booking', 'Rider', 'Admin','', rider_id, href);
+        pushNotification(chargingData.fcm_token, heading, desc, 'RDRFCM', href);
+
 
         client.publish(`/supro/EVONE/${chargingData.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
         return resp.json({ status: 1, code: 200, message: ["Charging Stop successfully."] });

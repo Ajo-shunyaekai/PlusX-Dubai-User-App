@@ -374,27 +374,27 @@ export const regsCreateOTP = asyncHandler(async (req, resp) => {
 
     const otp = generateOTP(4);
     storeOTP(fullMobile, otp);
-    return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //for testing server 
+    // return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //for testing server 
 
-    // sendOtp( fullMobile,
-    //     `Your One-Time Password (OTP) for sign-up is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
-    // )
-    // .then(result => {
-    //     if (result.status === 0) return resp.json(result);
-    //     return resp.json({
-    //         status                   : 1,
-    //         code                     : 200,
-    //         data                     : '',
-    //         message                  : ['OTP sent successfully!'],
-    //         can_register             : 1,
-    //         incomplete_offline_rider : existingRider && isIncompleteOfflineRider(existingRider) ? 1 : 0,
-    //         has_offline_booking      : prefill && !existingRider ? 1 : 0,
-    //         prefill                  : prefill || null,
-    //     });
-    // })
-    // .catch(err => {
-    //     tryCatchErrorHandler(req.originalUrl, err, resp, 'Failed to send OTP' );
-    // }); 
+    sendOtp( fullMobile,
+        `Your One-Time Password (OTP) for sign-up is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
+    )
+    .then(result => {
+        if (result.status === 0) return resp.json(result);
+        return resp.json({
+            status                   : 1,
+            code                     : 200,
+            data                     : '',
+            message                  : ['OTP sent successfully!'],
+            can_register             : 1,
+            incomplete_offline_rider : existingRider && isIncompleteOfflineRider(existingRider) ? 1 : 0,
+            has_offline_booking      : prefill && !existingRider ? 1 : 0,
+            prefill                  : prefill || null,
+        });
+    })
+    .catch(err => {
+        tryCatchErrorHandler(req.originalUrl, err, resp, 'Failed to send OTP' );
+    }); 
     
 });
 
@@ -431,27 +431,27 @@ export const createOTP = asyncHandler(async (req, resp) => {
         otp          = ( mobile == 509508509 || mobile == '509508509') ? "2207" : otp;
 
     storeOTP(fullMobile, otp);
-    return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //this is for testing server
+    // return resp.json({ status: 1, code: 200, data: otp, message: ['OTP sent successfully!'] }); //this is for testing server
 
-    // if( mobile == 508509508 || mobile == '508509508') {
-    //     return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
+    if( mobile == 508509508 || mobile == '508509508') {
+        return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
         
-    // } else if( mobile == 509508509 || mobile == '509508509') {
-    //     return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
+    } else if( mobile == 509508509 || mobile == '509508509') {
+        return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
         
-    // } else {
-    //     sendOtp( fullMobile,
-    //         `Your One-Time Password (OTP) for sign-in is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
-    //     )
-    //     .then(result => {
-    //         if (result.status === 0) return resp.json(result);
-    //         return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
-    //     })
-    //     .catch(err => {
-    //         console.error('Error in otpController:', err.message);
-    //         return resp.json({ status: 'error', msg: 'Failed to send OTP' });
-    //     }); 
-    // }
+    } else {
+        sendOtp( fullMobile,
+            `Your One-Time Password (OTP) for sign-in is: ${otp}. Do not share this OTP with anyone. Thank you for choosing PlusX Electric App!. A6NKWsZKgrz`
+        )
+        .then(result => {
+            if (result.status === 0) return resp.json(result);
+            return resp.json({ status: 1, code: 200, data: '', message: ['OTP sent successfully!'] });
+        })
+        .catch(err => {
+            console.error('Error in otpController:', err.message);
+            return resp.json({ status: 'error', msg: 'Failed to send OTP' });
+        }); 
+    }
 });
 
 export const verifyOTP = asyncHandler(async (req, resp) => {
@@ -623,7 +623,6 @@ export const updatePassword = asyncHandler(async (req, resp) => {
 });
 
 /* Rider Info */
-
 export const home = asyncHandler(async (req, resp) => {
     const {rider_id} = mergeParam(req);
     if (!rider_id) return resp.json({ status: 0, code: 422, message: ["Rider Id is required"] });
@@ -755,8 +754,9 @@ export const home = asyncHandler(async (req, resp) => {
     const packagedata = await queryDB(`
         SELECT 
             vc.customer_id, vc.pod_charging_session_number, vc.pod_charging_session_validity,
-            vc.rsa_charging_session_number, vc.rsa_charging_session_validity,
-            vc.package_data, vc.purchase_date,
+            vc.rsa_charging_session_number, vc.rsa_charging_session_validity, vc.purchase_date,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.package_id')) as package_id,
+            JSON_UNQUOTE(JSON_EXTRACT(vc.package_data, '$.charging_capacity')) as charging_capacity, 
             (
                 SELECT count(*)
                 FROM portable_charger_booking as pcb
@@ -789,8 +789,8 @@ export const home = asyncHandler(async (req, resp) => {
                     total_charging_sessions     : allotedSession,
                     used_charging_sessions      : sessionBooking,
                     remaining_charging_sessions : remainingSessions,
-                    package_id                  : packagedata.package_data.package_id,
-                    charging_capacity           : packagedata.package_data.charging_capacity
+                    package_id                  : packagedata?.package_id || "",
+                    charging_capacity           : packagedata?.charging_capacity || ""
                 });
             }
         }

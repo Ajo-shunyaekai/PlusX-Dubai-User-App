@@ -20,6 +20,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const stripe     = new Stripe(process.env.STRIPE_SECRET_KEY);
 
+
+
+import { taskQueue  } from "../taskQueue.js";
+export function addTaskQ(fn) {
+    return taskQueue.add(fn);
+}
+
 export const getPaymentSessionData = async (req, resp) => {
     const { session_id } = mergeParam(req);
     
@@ -141,17 +148,13 @@ const BookingConfirm = async (bookingType, bookingId, paymentIntentId, couponCod
 
 const portableChargerBookingConfirm = async (booking_id, payment_intent_id, couponCode ) => {
     // const conn = await startTransaction();
-    console.log('Webhooks POD')
     try { 
         const checkOrder = await queryDB(`
-            SELECT pcb.rider_id, pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude,
-            pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent, pcb.package_data
-            FROM 
-                portable_charger_booking as pcb
-            LEFT JOIN
-                riders AS rd ON rd.rider_id = pcb.rider_id
-            WHERE 
-                pcb.booking_id = ? AND pcb.status = 'PNR'
+            SELECT 
+                pcb.rider_id, pcb.user_name, pcb.country_code, pcb.contact_no, pcb.slot_date, pcb.slot_time, pcb.address, pcb.latitude, pcb.longitude, pcb.service_type, rd.fcm_token, rd.rider_email, pcb.vehicle_data, pcb.current_percent, pcb.package_data
+            FROM portable_charger_booking as pcb
+            LEFT JOIN riders AS rd ON rd.rider_id = pcb.rider_id
+            WHERE pcb.booking_id = ? AND pcb.status = 'PNR'
             LIMIT 1
         `,[ booking_id ]);
         if (!checkOrder) {
@@ -177,16 +180,13 @@ const portableChargerBookingConfirm = async (booking_id, payment_intent_id, coup
                 await db.execute('UPDATE portable_charger_subscriptions SET total_booking = total_booking + 1 WHERE rider_id = ?', [checkOrder.rider_id]);
             }
             const href    = 'portable_charger_booking/' + booking_id;
-            // const heading = 'Portable Charging Booking!';
             const heading = 'Mobile & Portable EV Charging Service Booking!';
             const desc    = `Booking Confirmed! ${booking_id}`;
-            // createNotification(heading, desc, 'Portable Charging Booking', 'Rider', 'Admin','', checkOrder.rider_id, href);
-            // createNotification(heading, desc, 'Portable Charging Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
-            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Rider', 'Admin','', checkOrder.rider_id, href);
-            createNotification(heading, desc, 'Mobile & Portable EV Charging Service Booking', 'Admin', 'Rider',  checkOrder.rider_id, '', href);
+            createNotification(heading, desc, heading, 'Rider', 'Admin','', checkOrder.rider_id, href);
+            createNotification(heading, desc, heading, 'Admin', 'Rider',  checkOrder.rider_id, '', href);
             pushNotification(checkOrder.fcm_token, heading, desc, 'RDRFCM', href);
         
-            const battery_percent  =   (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
+            const battery_percent  = (checkOrder.current_percent == 1) ? 'More than 10%' : 'Less than 10%' ;
             const packageData      = (checkOrder.package_data && typeof checkOrder.package_data === 'string') ? JSON.parse(checkOrder.package_data) : checkOrder.package_data;
             const chargingFee      = parseFloat(packageData?.price || 0);
             const chargingFeeVat   = (chargingFee + Math.floor(chargingFee * 5) / 100).toFixed(2);
@@ -570,53 +570,55 @@ export const failedRSABooking = async () => {
  * Logic: status S + started >= 3 min ago → if energy did not increase vs start_kwh,
  * mark Failed (F) and turn charger relay OFF (not plugged in / no draw).
  */
-export const scanChargePlugCheckCron = async () => {
+
+export const communityChargerCheckCron = async () => {
     try {
-        // Active sessions old enough to verify (same 3 min window as chargingStart)
+        
         const [rows] = await db.execute(`
             SELECT
-                b.booking_id,
-                b.charger_id,
-                b.start_kwh,
-                b.start_time,
+                b.booking_id, b.charger_id, b.start_kwh, b.start_time, b.rider_id,
                 (
                     SELECT cc.energy
                     FROM community_chargers cc
                     WHERE cc.charger_id = b.charger_id
                     LIMIT 1
-                ) AS current_energy
+                ) AS current_energy, rd.fcm_token
             FROM scan_charger_booking b
-            WHERE b.status = 'S'
-              AND b.created_at <= NOW() - INTERVAL 3 MINUTE
-        `);
+            LEFT JOIN riders AS rd ON rd.rider_id = b.rider_id
+            WHERE b.status = 'S' AND b.created_at <= NOW() - INTERVAL 1 MINUTE 
+            Having current_energy < 1 `
+        );
 
         for (const row of rows) {
-            const startKwh         = parseFloat(row.start_kwh) || 0;
-            const currentReading   = parseFloat(row.current_energy) || 0;
-            const totalConsumption = parseFloat(currentReading) - parseFloat(startKwh);
 
-            // Energy increased → charging started; leave session as S
-            if (totalConsumption != 0) continue;
+            addTaskQ(async () => { 
 
-            // Zero kWh delta → fail session (mirrors startChargingCheck in ScanChargeController)
-            const start_time_moment = moment(row.start_time, "YYYY-MM-DD HH:mm:ss", "Asia/Dubai");
-            const end_time            = moment().subtract(1, "hour").subtract(30, "minutes");
-            const diffInMinutes       = end_time.diff(start_time_moment, "minutes");
+                const startKwh         = parseFloat(row.start_kwh) || 0;
+                const currentReading   = parseFloat(row.current_energy) || 0;
+                const totalConsumption = parseFloat(currentReading) - parseFloat(startKwh);
 
-            await updateRecord(
-                "scan_charger_booking",
-                {
+                const start_time_moment = moment(row.start_time, "YYYY-MM-DD HH:mm:ss", "Asia/Dubai");
+                const end_time          = moment().subtract(1, "hour").subtract(30, "minutes");
+                const diffInMinutes     = end_time.diff(start_time_moment, "minutes");
+
+                const updtObj = {
                     total_consumption : totalConsumption,
                     total_duration    : diffInMinutes,
                     end_time          : moment(end_time, "YYYY-MM-DD HH:mm:ss").format("YYYY-MM-DD HH:mm:ss"),
                     end_kwh           : currentReading,
-                    status            : "F",
-                },
-                ["booking_id"],
-                [row.booking_id]
-            );
+                    status            : "C"
+                };
+                await updateRecord("scan_charger_booking", updtObj, ["booking_id"], [row.booking_id] );
 
-            client.publish(`/supro/EVONE/${row.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
+                const href    = 'community_charger_booking/' + row.booking_id;
+                const heading = 'Charging Completed!';
+                const desc    = `Your vehicle has completed charging.`;
+                createNotification(heading, desc, 'Community Charging Booking', 'Rider', 'Admin','', row.rider_id, href);
+                pushNotification(row.fcm_token, heading, desc, 'RDRFCM', href);
+
+
+                client.publish(`/supro/EVONE/${row.charger_id}/DL/RL`, "OFF", { qos: 0, retain: false });
+            });
         }
     } catch (err) {
         console.error("scanChargePlugCheckCron error:", err);

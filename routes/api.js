@@ -25,7 +25,7 @@ import { addRoadAssistance, roadAssistanceList, roadAssistanceDetail, roadAssist
 
 import {vehicleList, vehicleDetail, areaList, vehicleModelList, vehicleBrandList, dubaiAreaList } from '../controller/api/VehicleController.js';
 
-import { chargerList, packageList, chargerBooking, chargerBookingList,chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails } from '../controller/api/PortableChargerController.js';
+import { chargerList, packageList, chargerBooking, chargerBookingList, chargerBookingDetail, getPcSlotList, getPcSubscriptionList, userCancelPCBooking, reScheduleBooking, userFeedbackPCBooking, getPcSlotDateList, podInvoiceDetails, packageBookingList } from '../controller/api/PortableChargerController.js';
 
 import { getChargingServiceSlotList, requestService, listServices, getServiceOrderDetail, getInvoiceDetail, cancelValetBooking, userFeedbackValetBooking, rescheduleService, getChargingServiceDateList
 } from '../controller/api/ChargingServiceController.js';
@@ -156,17 +156,18 @@ const authzAndAuthRoutes = [
 
     /* Portable charger */
     { method: 'get',  path: '/portable-charger-list',            handler: chargerList },
-    { method: 'get',  path: '/charging-package-list',    handler: packageList },
+    { method: 'get',  path: '/charging-package-list',            handler: packageList },
     { method: 'post', path: '/portable-charger-booking',         handler: chargerBooking },
     { method: 'get',  path: '/portable-charger-booking-list',    handler: chargerBookingList },
     { method: 'get',  path: '/portable-charger-booking-detail',  handler: chargerBookingDetail },
     { method: 'get',  path: '/portable-charger-slot-list',       handler: getPcSlotList },
     { method: 'get',  path: '/portable-charger-subscription',    handler: getPcSubscriptionList },
-    { method: 'get',  path: '/portable-charger-cancel',          handler: userCancelPCBooking }, 
+    { method: 'get',  path: '/portable-charger-cancel',             handler: userCancelPCBooking }, 
     { method: 'post', path: '/reschedule-portable-charger-booking', handler: reScheduleBooking },
-    { method: 'post', path: '/feedback-portable-charger-booking', handler: userFeedbackPCBooking },
+    { method: 'post', path: '/feedback-portable-charger-booking',   handler: userFeedbackPCBooking },
     { method: 'get',  path: '/portable-charger-slot-date-list',     handler: getPcSlotDateList },
     { method: 'get',  path: '/portable-charger-invoice',            handler: podInvoiceDetails },
+    { method: 'get',  path: '/package-pod-booking-list',            handler: packageBookingList },
 
     /* Offer Routes */
     { method: 'get', path: '/offer-list',   handler: offerList },

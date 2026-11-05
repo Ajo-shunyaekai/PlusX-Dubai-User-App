@@ -20,7 +20,7 @@ import http from 'http';
 import cron from 'node-cron';
 import mqtt from 'mqtt';
 
-import { stripeWebhook, failedPODBooking, failedValetBooking, failedRSABooking, scanChargePlugCheckCron } from './controller/TestController.js';
+import { stripeWebhook, failedPODBooking, failedValetBooking, failedRSABooking, communityChargerCheckCron } from './controller/TestController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,11 +82,10 @@ cron.schedule('*/5 * * * *', async () => {
     console.log('This runs every 5 minutes', new Date().toISOString());
 });
 
-// Scan charge: fail sessions with no kWh after 3 min (backup for chargingStart setTimeout)
-// cron.schedule('* * * * *', async () => {
-//     await scanChargePlugCheckCron();
-//     console.log('This runs every minute', new Date().toISOString());
-// });
+cron.schedule('* * * * *', async () => {
+    await communityChargerCheckCron();
+    console.log('This runs every minute', new Date().toISOString());
+});
 app.use(errorHandler);
 
 // Socket Code Here 

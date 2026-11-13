@@ -20,7 +20,7 @@ import http from 'http';
 import cron from 'node-cron';
 import mqtt from 'mqtt';
 
-import { stripeWebhook, failedPODBooking, failedValetBooking, failedRSABooking, communityChargerCheckCron } from './controller/TestController.js';
+import { stripeWebhook, failedPODBooking, failedValetBooking, failedRSABooking, communityChargerCheckCron, communityChargerOngoingCheckCron } from './controller/TestController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,9 +76,9 @@ app.get('/payment-cancel', (req, res) => {
 });
 
 cron.schedule('*/5 * * * *', async () => {
-    await failedPODBooking()
-    await failedValetBooking() 
-    await failedRSABooking()
+    await failedPODBooking();
+    await failedValetBooking();
+    await failedRSABooking();
     console.log('This runs every 5 minutes', new Date().toISOString());
 });
 
@@ -86,6 +86,13 @@ cron.schedule('* * * * *', async () => {
     await communityChargerCheckCron();
     console.log('This runs every minute', new Date().toISOString());
 });
+
+cron.schedule('*/30 * * * *', async () => {
+    await communityChargerOngoingCheckCron();
+     
+    console.log('This runs every 30 minutes', new Date().toISOString());
+});
+
 app.use(errorHandler);
 
 // Socket Code Here 

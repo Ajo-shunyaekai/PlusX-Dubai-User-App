@@ -234,17 +234,13 @@ export const chargingStart = async (req, resp) => {
         const booking_id = 'SCB' + String(insert.insertId).padStart(4, '0');
         await updateRecord('scan_charger_booking', { booking_id }, ['id'], [insert.insertId]);
 
-        const href    = 'community_charger_booking/' + booking_id;
-        const heading = 'Charging in Progress ';
-        const desc    = `Your vehicle is currently charging. Please keep an eye on your charging session.`;
-        createNotification(heading, desc, 'Community Charging Booking', 'Rider', 'Admin','', rider_id, href);
-        pushNotification(chargeData.fcm_token, heading, desc, 'RDRFCM', href);
+        
 
         client.publish(`/supro/EVONE/${charger_id}/DL/RL`, "ON", { qos: 0, retain: false });
 
-        setTimeout(() => {
-            startChargingCheck(charger_id, booking_id);
-        }, 3 * 60 * 1000);
+        // setTimeout(() => {
+        //     startChargingCheck(charger_id, booking_id);
+        // }, 3 * 60 * 1000);
 
         return resp.json({
             booking_id,

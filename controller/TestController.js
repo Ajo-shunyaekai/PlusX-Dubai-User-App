@@ -625,3 +625,31 @@ export const communityChargerCheckCron = async () => {
         tryCatchErrorHandler("scan-charge-plug-check-cron", err, []);
     }
 };
+
+export const communityChargerOngoingCheckCron = async () => {
+    try {
+        
+        const [rows] = await db.execute(`
+            SELECT b.booking_id, b.rider_id, rd.fcm_token
+            FROM scan_charger_booking b
+            LEFT JOIN riders AS rd ON rd.rider_id = b.rider_id
+            WHERE b.status = 'S' `
+        ); //AND b.created_at <= NOW() - INTERVAL 1 MINUTE   Having current_energy < 1 
+
+        for (const row of rows) {
+
+            addTaskQ(async () => { 
+
+                const href    = 'community_charger_booking/' + row.booking_id;
+                const heading = 'Charging in Progress ';
+                const desc    = `Your vehicle is currently charging. Please keep an eye on your charging session.`;
+                createNotification(heading, desc, 'Community Charging Booking', 'Rider', 'Admin','', row.rider_id, href);
+                pushNotification(row.fcm_token, heading, desc, 'RDRFCM', href);
+
+            });
+        }
+    } catch (err) {
+        console.error("scanChargePlugCheckCron error:", err);
+        tryCatchErrorHandler("scan-charge-plug-check-cron", err, []);
+    }
+};

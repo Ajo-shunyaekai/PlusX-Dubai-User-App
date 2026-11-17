@@ -197,6 +197,10 @@ export const chargeShareDetail = asyncHandler(async (req, resp) => {
         WHERE charger_id = ?`, [charger_id]
     ); 
     if (!charger) return resp.status(404).json({status: 0, code:404, message: 'Charge share Product not found.'});
+
+    charger.chargeRecomendRate = null;
+    charger.accessPermit = 0;
+
     return resp.json({
         status   : 1,
         code     : 200,

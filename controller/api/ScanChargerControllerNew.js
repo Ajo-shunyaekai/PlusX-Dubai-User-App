@@ -311,8 +311,8 @@ export const stopCharge = async (req, resp) => {
         const chargingData = await queryDB(`
             SELECT charger_id, start_time, start_kwh, resident_data, rd.fcm_token
             FROM scan_charger_booking
-            WHERE booking_id = ? AND rider_id = ? AND status = ?
             LEFT JOIN riders AS rd ON rd.rider_id = scan_charger_booking.rider_id
+            WHERE scan_charger_booking.booking_id = ? AND scan_charger_booking.rider_id = ? AND scan_charger_booking.status = ?
             LIMIT 1`, [booking_id, rider_id, "S"]
         );
         if (!chargingData) {

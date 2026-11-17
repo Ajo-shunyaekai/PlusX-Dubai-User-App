@@ -138,6 +138,32 @@ const resolveAppPlatform = (added_from = '') => {
     return added_from === 'iOS' ? 'iOS' : 'Android';
 };
 
+const HOME_NEW_USER_POPUP_MODULE = 'home';
+const HOME_NEW_USER_POPUP_TYPE   = 'new-user-welcome';
+
+/** CMS copy for home welcome promo; app decides whether/when to show. */
+const fetchNewUserWelcomeContent = async () => {
+    const [rows] = await db.execute(
+        `SELECT content
+         FROM response_content
+         WHERE module_name = ? AND response_type = ? AND status = 1
+         ORDER BY id ASC`,
+        [HOME_NEW_USER_POPUP_MODULE, HOME_NEW_USER_POPUP_TYPE]
+    );
+    if (!rows?.length) {
+        return null;
+    }
+    const heading = rows[0]?.content || '';
+    const content = rows[1]?.content || '';
+    if (!heading && !content) {
+        return null;
+    }
+    return {
+        heading,
+        content: content || heading,
+    };
+};
+
 export const login = asyncHandler(async (req, resp) => {
     const { mobile, password ,fcm_token , country_code, added_from = '' } = mergeParam(req);
 
@@ -811,6 +837,8 @@ export const home = asyncHandler(async (req, resp) => {
             }
         }
     }
+    const new_user_popup = await fetchNewUserWelcomeContent();
+
     return resp.json({
         message                   : ["Rider Home Data fetched successfully!"],
         rider_data                : result,
@@ -824,7 +852,8 @@ export const home = asyncHandler(async (req, resp) => {
         code                      : 200,
         scanChargingData    : scanChargingData,
         chargingPackageData : chargingPackageData,
-        packageCount        : packageCountObj.packageCount
+        packageCount        : packageCountObj.packageCount,
+        new_user_popup,
     });
 });
 

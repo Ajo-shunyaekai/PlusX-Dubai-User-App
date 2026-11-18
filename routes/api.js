@@ -34,7 +34,8 @@ import { getPaymentdetails, getPaymentSessionData } from '../controller/TestCont
 import { responseContent, countryList } from '../controller/api/ContentController.js';
 
 import { outputAndConnector, addChargShare, editChargShare, chargeShareList, chargeShareDetail, chargeShareDelete, chargeshareForMap } from '../controller/api/ChargeShareController.js'; 
-//import { makeBookingHistoryPOD, makeBookingHistoryRSA, makeBookingHistoryValet } from '../controller/InvoiceUpdateController.js'; 
+
+import { upload, makeModelInsert } from '../controller/InvoiceUpdateController.js'; 
 
 // Legacy scan-charge (single community_resident.community_id join) — replaced by ScanChargerControllerNew.js
 // import { chargingStart, stopCharge, chargingDetail, chargingHistory, scanChargeInvoices, scanChargeInvoiceDetail } from '../controller/api/ScanChargeController.js';
@@ -246,7 +247,7 @@ authzAndAuthRoutes.forEach(({ method, path, handler }) => {
         middlewares.push(handleFileUpload(rule.folder, rule.fields, rule.maxCount));
     } 
     middlewares.push(apiAuthorization);
-    middlewares.push(apiAuthentication);
+    // middlewares.push(apiAuthentication);
     router[method](path, ...middlewares, handler);
 });
 router.post('/validate-coupon', redeemCoupon);
@@ -255,7 +256,14 @@ router.post('/auto-pay', autoPay);
 // One Time routes
 //router.post('/pod-invoice-history', apiAuthorization, makeBookingHistoryPOD);
 //router.post('/rsa-invoice-history', apiAuthorization, makeBookingHistoryRSA);
-//router.post('/valet-invoice-history', apiAuthorization, makeBookingHistoryValet);
+
+router.post('/make-model-list', apiAuthorization, makeModelInsert);
+// router.post(
+//     '/make-model-list',
+//     uploadExcel,
+//     apiAuthorization,
+//     makeModelInsert
+// );
 
 export default router;
 

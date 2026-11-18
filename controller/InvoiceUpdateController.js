@@ -5,6 +5,19 @@ import moment from "moment-timezone";
 
 import { taskQueue  } from "../taskQueue.js";
 
+import multer from "multer";
+import ExcelJS from "exceljs";
+
+const storage       = multer.memoryStorage();
+// export const upload = multer({ storage });
+
+export const upload = multer({
+    storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    }
+});
+
 export function addTaskQ(fn) {
     return taskQueue.add(fn);
 }
@@ -265,4 +278,66 @@ export const makeBookingHistoryValet = asyncHandler(async (req, resp) => {
         });
     }
     return resp.json({ length: invoiceList.length, message: "Data in tasks queued " });
+});
+
+
+export const makeModelInsert = asyncHandler(async (req, resp) => {
+
+    const makeArr = ['Avatr', 'BMW', 'BYD', 'Cadillac', 'Chery', 'Deepal',
+        'Ford', 'Foton', 'GMC', 'HiPhi', 'Honda', 'Hongqi',
+        'Hyundai', 'Jetour', 'KIA', 'Lexus', 'Lotus', 'Lynk & Co',
+        'Mercedes', 'Mercedes-Benz', 'Nissan', 'Polestar', 'Porsche',
+        'Rabdan', 'Range Rover', 'Riddara', 'Rivian', 'Rolls-Royce', 'Rox',
+        'Seres', 'Smart', 'Tesla', 'Toyota', 'VinFast', 'Volkswagen',
+        'Volvo', 'XPeng', 'Zeekr',
+    ]
+    const placeholders = makeArr.map(() => '?').join(',');
+
+    // const [makeList] = await db.execute(`
+    //     SELECT make, model FROM vehicle_brand_list WHERE make IN (${placeholders}) 
+    //     AND status  = 1 Order by make asc`, makeArr 
+    // );
+    const [makeList] = await db.execute(`
+        SELECT make, GROUP_CONCAT(model ORDER BY model ASC SEPARATOR ', ') AS models
+        FROM vehicle_brand_list
+        WHERE make IN (${placeholders}) AND status = 1
+        GROUP BY make
+        ORDER BY make ASC `, makeArr
+    );
+    
+    return resp.json({ data: makeList, message: "make lIst  " });
+});
+
+ 
+export const makeModelInsertFaltu = asyncHandler(async (req, res) => {
+    try {
+        console.log(req.headers['content-type']);
+        console.log(req.file);
+        // Validate file
+        if (!req.file) return res.json({ message: "Nofg file uploaded" });
+        if (!req.file.originalname.toLowerCase().endsWith(".xlsx")) {
+            return res.json({ status: 0, message: "Invalid file type. Only Excel (.xlsx) allowed" });
+        }
+        // Load Excel
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(req.file.buffer);
+        const worksheet = workbook.worksheets[0];
+
+        // Process each row
+        worksheet.eachRow({ includeEmpty: false }, async (row, rowNumber) => {
+            if (rowNumber <= 1) return; // skip header rows
+             
+            if (rowNumber == 2) {
+                console.log("premiseNumber", getCellValue(row, 1), getCellValue(row, 2), getCellValue(row, 3));
+            };
+            
+             
+        });
+        // Respond after queuing all tasks
+        return res.json({ message: "Excel data uploaded successfully (tasks queued)" });
+    } catch (error) {
+        console.log("Main Error:", error);
+        tryCatchErrorHandler(req.originalUrl, error.message);
+        return res.json({ status: "Failed", error: [error.message] });
+    }
 });
